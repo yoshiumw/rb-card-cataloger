@@ -237,7 +237,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
       </div>
 
       {/* Camera View */}
-      <div className="flex-1 relative flex items-center justify-center bg-black">
+      <div className="flex-1 relative flex items-center justify-center bg-black overflow-hidden">
         {error ? (
           <div className="text-center p-8">
             <div className="text-red-400 mb-4">
@@ -253,28 +253,35 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           </div>
         ) : (
           <>
+            {/* Video element - positioned absolutely to not interfere with overlays */}
             <video
               ref={videoRef}
               autoPlay
               playsInline
               muted
               controls={false}
-              className="max-w-full max-h-full object-contain"
-              style={{ transform: 'scale(1)' }}
+              className="absolute inset-0 w-full h-full object-cover"
+              style={{ 
+                transform: 'scale(1)',
+                zIndex: 1
+              }}
             />
             <canvas ref={canvasRef} className="hidden" />
             
-            {/* Scanning overlay */}
-            <div className="absolute inset-0 pointer-events-none">
+            {/* Scanning overlay - higher z-index to stay on top */}
+            <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
               {/* Scanning region indicator */}
-              <div className="absolute bottom-0 left-0 w-[30%] h-[15%] border-2 border-purple-500 border-dashed animate-pulse">
-                <div className="absolute top-0 left-0 w-full h-full bg-purple-500/10" />
+              <div className="absolute bottom-20 left-4 w-[30%] h-[15%] border-4 border-purple-500 border-dashed animate-pulse rounded-lg">
+                <div className="absolute top-0 left-0 w-full h-full bg-purple-500/20 rounded-lg" />
+                <div className="absolute -top-6 left-0 text-xs text-purple-300 font-semibold">
+                  Card ID
+                </div>
               </div>
               
               {/* Status text */}
-              <div className="absolute bottom-4 left-4 right-4 text-center">
-                <div className="inline-block bg-black/70 px-4 py-2 rounded-lg">
-                  <p className="text-white text-sm">
+              <div className="absolute top-4 left-4 right-4 text-center">
+                <div className="inline-block bg-black/80 px-6 py-3 rounded-lg backdrop-blur-sm">
+                  <p className="text-white text-sm font-medium">
                     {isScanning && <Loader2 size={16} className="inline animate-spin mr-2" />}
                     {scanningStatus}
                   </p>
@@ -285,9 +292,9 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
         )}
       </div>
 
-      {/* Instructions */}
+      {/* Instructions - positioned above video with higher z-index */}
       {!error && (
-        <div className="bg-gray-900 border-t border-gray-700 p-4">
+        <div className="bg-gray-900 border-t border-gray-700 p-4 relative" style={{ zIndex: 20 }}>
           <div className="max-w-2xl mx-auto">
             <h3 className="text-white font-semibold mb-2">How to scan:</h3>
             <ul className="text-gray-400 text-sm space-y-1">
