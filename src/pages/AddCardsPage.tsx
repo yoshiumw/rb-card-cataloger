@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { PlusCircle, Check, X, Search, AlertCircle, Loader2 } from 'lucide-react';
+import { PlusCircle, Check, X, Search, AlertCircle, Loader2, Camera } from 'lucide-react';
 import { addCardToCollection } from '../services/collectionService';
 import { getCardById, isValidCardIdFormat } from '../services/cardLookupService';
 import { useAuth } from '../contexts/AuthContext';
 import { Card, CollectionEntry } from '../types';
+import CameraScanner from '../components/CameraScanner';
 
 interface AddResult {
   cardId: string;
@@ -21,6 +22,7 @@ export default function AddCardsPage() {
   const [history, setHistory] = useState<AddResult[]>([]);
   const [preview, setPreview] = useState<Card | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [cameraMode, setCameraMode] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const previewTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
 
@@ -85,6 +87,35 @@ export default function AddCardsPage() {
     }
   };
 
+  const handleCardIdDetected = async (cardId: string) => {
+    setCameraMode(false);
+    setInputValue(cardId);
+    
+    // Automatically add the card after a brief delay
+    setTimeout(async () => {
+      if (user) {
+        setLoading(true);
+        const result = await addCardToCollection(user.uid, cardId);
+        
+        const addResult: AddResult = {
+          cardId,
+          cardName: result.entry?.cardName || result.entry?.displayName || cardId,
+          success: result.success,
+          message: result.success 
+            ? `Added ${result.entry!.cardName} (×${result.entry!.quantity})` 
+            : result.error || 'Failed to add card',
+          entry: result.entry,
+        };
+
+        setLastResult(addResult);
+        setHistory(prev => [addResult, ...prev].slice(0, 20));
+        setInputValue('');
+        setPreview(null);
+        setLoading(false);
+      }
+    }, 500);
+  };
+
   const formatValid = inputValue.trim() ? isValidCardIdFormat(inputValue.trim()) : null;
 
   return (
@@ -140,6 +171,15 @@ export default function AddCardsPage() {
               >
                 {loading ? <Loader2 size={20} className="animate-spin" /> : <PlusCircle size={20} />}
                 <span className="hidden sm:inline">Add</span>
+              </button>
+              <button
+                onClick={() => setCameraMode(true)}
+                disabled={loading}
+                className="px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:opacity-50 text-white font-medium rounded-lg transition-colors flex items-center gap-2"
+                title="Scan card with camera"
+              >
+                <Camera size={20} />
+                <span className="hidden sm:inline">Scan</span>
               </button>
             </div>
             {formatValid === false && inputValue.trim() && (
@@ -252,6 +292,14 @@ export default function AddCardsPage() {
             ))}
           </div>
         </div>
+      )}
+
+      {/* Camera Scanner */}
+      {cameraMode && (
+        <CameraScanner
+          onCardIdDetected={handleCardIdDetected}
+          onClose={() => setCameraMode(false)}
+        />
       )}
     </div>
   );

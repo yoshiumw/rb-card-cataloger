@@ -9,19 +9,29 @@ import { MissingCardSummary, DeckSectionKey } from '../types';
 
 export default function MissingCardsPage() {
   const { user } = useAuth();
+  const [decks, setDecks] = useState<any[]>([]);
   const [missingCards, setMissingCards] = useState<MissingCardSummary[]>([]);
   const [search, setSearch] = useState('');
   const [deckFilter, setDeckFilter] = useState('');
   const [resolving, setResolving] = useState(false);
 
-  const decks = useMemo(() => user ? getDecks(user.uid) : [], [user]);
-  const deckNames = useMemo(() => decks.map(d => d.name), [decks]);
+  const deckNames = useMemo(() => decks.map((d: any) => d.name), [decks]);
 
   useEffect(() => {
     if (!user) return;
     
+    const loadDecks = async () => {
+      const userDecks = await getDecks(user.uid);
+      setDecks(userDecks);
+    };
+    
+    loadDecks();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || decks.length === 0) return;
+    
     const resolveAndCalculate = async () => {
-      if (decks.length === 0) return;
       
       // Collect all card names from all decks
       const allCardNames = new Set<string>();
