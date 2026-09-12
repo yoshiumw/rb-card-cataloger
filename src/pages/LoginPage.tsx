@@ -129,6 +129,10 @@ export default function LoginPage() {
             </div>
           </div>
 
+          <div className="mb-3 p-3 rounded-lg bg-blue-500/10 border border-blue-500/30 text-blue-300 text-xs">
+            <strong>Note:</strong> Google sign-in opens a popup window. If it doesn't appear, please allow popups for this site in your browser settings.
+          </div>
+
           <button
             onClick={handleGoogleLogin}
             disabled={loading}

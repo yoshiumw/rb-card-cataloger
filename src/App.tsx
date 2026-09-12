@@ -10,6 +10,7 @@ import DecksPage from './pages/DecksPage';
 import DeckDetailPage from './pages/DeckDetailPage';
 import MissingCardsPage from './pages/MissingCardsPage';
 import SettingsPage from './pages/SettingsPage';
+import DebugPage from './pages/DebugPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -64,6 +65,7 @@ function AppRoutes() {
       <Route path="/decks/:id" element={<ProtectedRoute><DeckDetailPage /></ProtectedRoute>} />
       <Route path="/missing" element={<ProtectedRoute><MissingCardsPage /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+      <Route path="/debug" element={<DebugPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
