@@ -273,7 +273,7 @@ function DeckCard({ deck, onDelete }: { deck: Deck; onDelete: () => void }) {
           </p>
         </div>
         <button
-          onClick={e => { e.preventDefault(); onDelete(); }}
+          onClick={e => { e.stopPropagation(); onDelete(); }}
           className="p-1.5 rounded-md text-gray-400 hover:text-red-400 hover:bg-red-600/10 transition-colors"
         >
           <Trash2 size={16} />
