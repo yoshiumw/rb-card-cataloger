@@ -3,7 +3,7 @@ import { AlertTriangle, Search, Package, Loader2 } from 'lucide-react';
 import { getDecks } from '../services/deckService';
 import { getCollection } from '../services/collectionService';
 import { calculateMissingCards } from '../services/completionCalculator';
-import { getCardByName } from '../services/cardLookupService';
+import { getCardByName, isCardCached } from '../services/cardLookupService';
 import { MissingCardSummary, DeckSectionKey } from '../types';
 
 export default function MissingCardsPage() {
@@ -19,9 +19,7 @@ export default function MissingCardsPage() {
     const resolveAndCalculate = async () => {
       if (decks.length === 0) return;
       
-      setResolving(true);
-      
-      // Resolve all card names from API to populate cache
+      // Collect all card names from all decks
       const allCardNames = new Set<string>();
       const sectionKeys: DeckSectionKey[] = ['legend', 'champion', 'mainDeck', 'battlefields', 'runePool', 'sideboard'];
       
@@ -33,15 +31,21 @@ export default function MissingCardsPage() {
         }
       }
 
-      // Resolve in batches
-      const names = Array.from(allCardNames);
-      const batchSize = 5;
-      for (let i = 0; i < names.length; i += batchSize) {
-        const batch = names.slice(i, i + batchSize);
-        await Promise.all(batch.map(name => getCardByName(name)));
-      }
+      // Only resolve cards that aren't already cached
+      const uncachedNames = Array.from(allCardNames).filter(name => !isCardCached(name));
+      
+      if (uncachedNames.length > 0) {
+        setResolving(true);
 
-      setResolving(false);
+        // Resolve in batches
+        const batchSize = 5;
+        for (let i = 0; i < uncachedNames.length; i += batchSize) {
+          const batch = uncachedNames.slice(i, i + batchSize);
+          await Promise.all(batch.map(name => getCardByName(name)));
+        }
+
+        setResolving(false);
+      }
 
       // Now calculate missing cards with full cache
       const collection = getCollection();

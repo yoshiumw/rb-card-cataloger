@@ -5,15 +5,15 @@ import { fetchCardById, findCardByName, searchCardsByName } from './apiService';
  * Card Lookup Service
  * 
  * Architecture:
- *   Card ID → Card Lookup Service → API (riftcodex.com) → Result
+ *   Card ID → Card Lookup Service → Local Cache (localStorage) → API (riftcodex.com) → Result
  * 
- * This service is designed to be independent of the input method.
- * Later, both manual entry and camera scanning can feed into this same service.
- * 
- * Uses the riftcodex.com API with local caching for performance.
+ * Cards are cached persistently in localStorage so they survive page reloads.
+ * The API is only called when a card is not in the local cache.
  */
 
-// In-memory cache for quick lookups (avoids repeated API calls)
+const CACHE_KEY = 'riftbound_card_cache';
+
+// In-memory cache (loaded from localStorage on init)
 const cardCache = new Map<string, Card>();
 const nameCache = new Map<string, Card>();
 
@@ -21,10 +21,52 @@ const nameCache = new Map<string, Card>();
 const pendingRequests = new Map<string, Promise<Card | null>>();
 
 /**
+ * Load cache from localStorage into memory
+ */
+function loadCacheFromStorage(): void {
+  try {
+    const stored = localStorage.getItem(CACHE_KEY);
+    if (!stored) return;
+    
+    const cards: Card[] = JSON.parse(stored);
+    for (const card of cards) {
+      cardCache.set(card.cardId.toLowerCase(), card);
+      nameCache.set(card.cardName.toLowerCase(), card);
+      nameCache.set(card.displayName.toLowerCase(), card);
+    }
+  } catch (error) {
+    console.error('Failed to load card cache from storage:', error);
+  }
+}
+
+/**
+ * Persist the current cache to localStorage
+ */
+function saveCacheToStorage(): void {
+  try {
+    const cards = Array.from(cardCache.values());
+    localStorage.setItem(CACHE_KEY, JSON.stringify(cards));
+  } catch (error) {
+    console.error('Failed to save card cache to storage:', error);
+  }
+}
+
+// Initialize cache on module load
+loadCacheFromStorage();
+
+/**
+ * Add a card to the cache and persist
+ */
+function addToCache(card: Card): void {
+  cardCache.set(card.cardId.toLowerCase(), card);
+  nameCache.set(card.cardName.toLowerCase(), card);
+  nameCache.set(card.displayName.toLowerCase(), card);
+  saveCacheToStorage();
+}
+
+/**
  * Look up a card by its Riftbound ID (e.g., "ven-131" or "OGN-039-298")
- * Uses cache first, then falls back to API.
- * @param cardId - The card identifier
- * @returns The card data if found, null otherwise
+ * Uses persistent cache first, then falls back to API.
  */
 export async function getCardById(cardId: string): Promise<Card | null> {
   const normalizedId = cardId.trim().toLowerCase();
@@ -43,11 +85,7 @@ export async function getCardById(cardId: string): Promise<Card | null> {
   
   try {
     const card = await request;
-    if (card) {
-      cardCache.set(normalizedId, card);
-      nameCache.set(card.cardName.toLowerCase(), card);
-      nameCache.set(card.displayName.toLowerCase(), card);
-    }
+    if (card) addToCache(card);
     return card;
   } finally {
     pendingRequests.delete(normalizedId);
@@ -55,18 +93,15 @@ export async function getCardById(cardId: string): Promise<Card | null> {
 }
 
 /**
- * Look up a card by its name (uses API fuzzy search)
- * @param cardName - The card name (decklist format: "Kai'Sa, Survivor")
- * @returns The card data if found, null otherwise
+ * Look up a card by its name (uses API fuzzy search if not cached)
  */
 export async function getCardByName(cardName: string): Promise<Card | null> {
   const normalizedName = cardName.trim().toLowerCase();
   
-  // Check cache first
+  // Check cache first (both formats)
   const cached = nameCache.get(normalizedName);
   if (cached) return cached;
   
-  // Also try with dash format
   const dashName = cardName.replace(/,\s*/g, ' - ').toLowerCase();
   const cachedDash = nameCache.get(dashName);
   if (cachedDash) return cachedDash;
@@ -81,11 +116,7 @@ export async function getCardByName(cardName: string): Promise<Card | null> {
   
   try {
     const card = await request;
-    if (card) {
-      cardCache.set(card.cardId.toLowerCase(), card);
-      nameCache.set(card.cardName.toLowerCase(), card);
-      nameCache.set(card.displayName.toLowerCase(), card);
-    }
+    if (card) addToCache(card);
     return card;
   } finally {
     pendingRequests.delete(`name:${normalizedName}`);
@@ -94,8 +125,6 @@ export async function getCardByName(cardName: string): Promise<Card | null> {
 
 /**
  * Search cards by partial name or ID (uses API)
- * @param query - Search query
- * @returns Array of matching cards
  */
 export async function searchCards(query: string): Promise<Card[]> {
   if (!query.trim()) return [];
@@ -111,13 +140,32 @@ export async function searchCards(query: string): Promise<Card[]> {
   const { cards } = await searchCardsByName(query.trim());
   
   // Cache results
-  cards.forEach(card => {
-    cardCache.set(card.cardId.toLowerCase(), card);
-    nameCache.set(card.cardName.toLowerCase(), card);
-    nameCache.set(card.displayName.toLowerCase(), card);
-  });
+  for (const card of cards) {
+    addToCache(card);
+  }
   
   return cards;
+}
+
+/**
+ * Check if a card name is already in the local cache (synchronous)
+ */
+export function isCardCached(cardName: string): boolean {
+  const normalized = cardName.trim().toLowerCase();
+  if (nameCache.has(normalized)) return true;
+  const dashName = cardName.replace(/,\s*/g, ' - ').toLowerCase();
+  return nameCache.has(dashName);
+}
+
+/**
+ * Get a card from cache synchronously (returns null if not cached)
+ */
+export function getCachedCardByName(cardName: string): Card | null {
+  const normalized = cardName.trim().toLowerCase();
+  const cached = nameCache.get(normalized);
+  if (cached) return cached;
+  const dashName = cardName.replace(/,\s*/g, ' - ').toLowerCase();
+  return nameCache.get(dashName) || null;
 }
 
 /**
@@ -144,28 +192,25 @@ export function getCacheSize(): number {
 }
 
 /**
- * Clear the cache
+ * Clear the cache (both memory and localStorage)
  */
 export function clearCache(): void {
   cardCache.clear();
   nameCache.clear();
+  localStorage.removeItem(CACHE_KEY);
 }
 
 /**
  * Pre-cache a card (add to cache without API call)
  */
 export function cacheCard(card: Card): void {
-  cardCache.set(card.cardId.toLowerCase(), card);
-  nameCache.set(card.cardName.toLowerCase(), card);
-  nameCache.set(card.displayName.toLowerCase(), card);
+  addToCache(card);
 }
 
 /**
  * Check if a card ID format is valid
- * Accepts formats like: VEN-131, OGN-039-298, ven-131, etc.
  */
 export function isValidCardIdFormat(cardId: string): boolean {
-  // Format: SET-NUMBER or SET-NUMBER-NUMBER
   const pattern = /^[A-Za-z]+-\d+(-\d+)?$/;
   return pattern.test(cardId.trim());
 }

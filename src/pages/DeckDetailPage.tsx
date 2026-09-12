@@ -5,7 +5,7 @@ import { getDeck, deleteDeck, updateDeck } from '../services/deckService';
 import { getCollection } from '../services/collectionService';
 import { calculateDeckCompletion } from '../services/completionCalculator';
 import { validateDecklist } from '../services/decklistParser';
-import { getCardByName } from '../services/cardLookupService';
+import { getCardByName, isCardCached } from '../services/cardLookupService';
 import { Deck, ParsedDecklist, SectionCompletion, DeckSectionKey } from '../types';
 
 export default function DeckDetailPage() {
@@ -39,7 +39,6 @@ export default function DeckDetailPage() {
   }, [deck]);
 
   const resolveCards = async (parsed: ParsedDecklist) => {
-    setResolving(true);
     const sectionKeys: DeckSectionKey[] = ['legend', 'champion', 'mainDeck', 'battlefields', 'runePool', 'sideboard'];
     
     const allCardNames: string[] = [];
@@ -49,10 +48,20 @@ export default function DeckDetailPage() {
       }
     }
 
+    // Only resolve cards that aren't already cached
+    const uncachedNames = allCardNames.filter(name => !isCardCached(name));
+    
+    if (uncachedNames.length === 0) {
+      setResolved(true);
+      return;
+    }
+
+    setResolving(true);
+
     // Resolve in batches to avoid too many concurrent requests
     const batchSize = 5;
-    for (let i = 0; i < allCardNames.length; i += batchSize) {
-      const batch = allCardNames.slice(i, i + batchSize);
+    for (let i = 0; i < uncachedNames.length; i += batchSize) {
+      const batch = uncachedNames.slice(i, i + batchSize);
       await Promise.all(batch.map(name => getCardByName(name)));
     }
 

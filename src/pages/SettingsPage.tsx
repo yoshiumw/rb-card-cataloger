@@ -1,14 +1,21 @@
 import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { User, Shield, Database, Info } from 'lucide-react';
-import { getCacheSize, getCachedSets } from '../services/cardLookupService';
+import { getCacheSize, getCachedSets, clearCache } from '../services/cardLookupService';
 import { getCollectionAsArray } from '../services/collectionService';
 
 export default function SettingsPage() {
   const { user, logout } = useAuth();
-  const cacheSize = getCacheSize();
+  const [cacheSize, setCacheSize] = React.useState(getCacheSize());
   const cachedSets = getCachedSets();
   const collectionSize = getCollectionAsArray().length;
+
+  const handleClearCache = () => {
+    if (confirm('Clear the card cache? Cards will be re-fetched from the API as needed.')) {
+      clearCache();
+      setCacheSize(0);
+    }
+  };
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -80,6 +87,12 @@ export default function SettingsPage() {
           <p className="text-xs text-gray-500">
             Cards are cached locally as you look them up. The full database is available via the Riftbound API (riftcodex.com).
           </p>
+          <button
+            onClick={handleClearCache}
+            className="mt-3 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg text-sm font-medium transition-colors"
+          >
+            Clear Card Cache
+          </button>
         </div>
       </div>
 
