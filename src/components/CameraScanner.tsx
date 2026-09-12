@@ -133,9 +133,10 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
       // Draw video frame to canvas
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Crop the bottom-left region where card ID typically appears
-      const cropWidth = Math.floor(canvas.width * 0.3);
-      const cropHeight = Math.floor(canvas.height * 0.15);
+      // Crop a larger region to capture card ID more reliably
+      // Card IDs can appear in various positions depending on device orientation
+      const cropWidth = Math.floor(canvas.width * 0.5);
+      const cropHeight = Math.floor(canvas.height * 0.25);
       const cropX = 0;
       const cropY = canvas.height - cropHeight;
 
@@ -151,6 +152,24 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
       if (tempContext) {
         tempContext.putImageData(imageData, 0, 0);
         
+        // Apply image preprocessing for better OCR accuracy
+        // Convert to grayscale and increase contrast
+        const pixels = tempContext.getImageData(0, 0, cropWidth, cropHeight);
+        const data = pixels.data;
+        for (let i = 0; i < data.length; i += 4) {
+          // Convert to grayscale using luminance formula
+          const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+          
+          // Apply threshold for binarization (improves OCR accuracy)
+          const threshold = 128;
+          const value = gray > threshold ? 255 : 0;
+          
+          data[i] = value;     // R
+          data[i + 1] = value; // G
+          data[i + 2] = value; // B
+        }
+        tempContext.putImageData(pixels, 0, 0);
+        
         // Convert to data URL for Tesseract
         const imageUrl = tempCanvas.toDataURL('image/png');
 
@@ -159,13 +178,17 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           
           setScanningStatus('Processing image...');
           
-          // Use Tesseract to recognize text
+          // Use Tesseract to recognize text with enhanced configuration for better accuracy
           const result = await Tesseract.recognize(imageUrl, 'eng', {
             logger: (m) => {
               if (m.status === 'recognizing text' && isScanning) {
                 setScanningStatus(`Recognizing... ${Math.round(m.progress * 100)}%`);
+              } else if (m.status === 'initializing tesseract' && isScanning) {
+                setScanningStatus('Initializing OCR engine...');
               }
-            }
+            },
+            tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-•·/',
+            preserve_interword_spaces: '1'
           });
 
           if (!isScanning) return; // Check again after processing
@@ -218,7 +241,13 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           if (isScanning) {
             const previewText = text.trim().substring(0, 60).replace(/\s+/g, ' ');
             console.log('OCR detected:', previewText);
-            setScanningStatus(`Reading: "${previewText}"`);
+            
+            // Provide more detailed feedback about what was found
+            if (previewText.length > 0) {
+              setScanningStatus(`Detected: "${previewText}" (no valid ID format)`);
+            } else {
+              setScanningStatus('No text detected. Adjust position/lighting.');
+            }
           }
         } catch (err) {
           console.error('OCR error:', err);
@@ -230,7 +259,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
 
       // Continue scanning if still active
       if (isScanning) {
-        setTimeout(scanFrame, 1500); // Scan every 1.5 seconds
+        setTimeout(scanFrame, 800); // Scan every 0.8 seconds for faster feedback
       }
     } catch (err) {
       console.error('Error in scanFrame:', err);
@@ -295,10 +324,10 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             {/* Scanning overlay - higher z-index to stay on top */}
             <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
               {/* Scanning region indicator */}
-              <div className="absolute bottom-20 left-4 w-[30%] h-[15%] border-4 border-purple-500 border-dashed animate-pulse rounded-lg">
+              <div className="absolute bottom-20 left-4 w-[50%] h-[25%] border-4 border-purple-500 border-dashed animate-pulse rounded-lg">
                 <div className="absolute top-0 left-0 w-full h-full bg-purple-500/20 rounded-lg" />
                 <div className="absolute -top-6 left-0 text-xs text-purple-300 font-semibold">
-                  Card ID
+                  Card ID Area
                 </div>
               </div>
               
@@ -322,10 +351,11 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           <div className="max-w-2xl mx-auto">
             <h3 className="text-white font-semibold mb-2">How to scan:</h3>
             <ul className="text-gray-400 text-sm space-y-1">
-              <li>• Position the card so the ID in the bottom-left corner is visible</li>
-              <li>• Ensure good lighting and the card is in focus</li>
-              <li>• Hold steady while the scanner processes the image</li>
+              <li>• Position the card so the ID in the bottom-left corner is within the purple frame</li>
+              <li>• Ensure good lighting - avoid shadows and glare on the card</li>
+              <li>• Hold steady while the scanner processes the image (watch for status updates)</li>
               <li>• The scanner will automatically detect and extract the card ID</li>
+              <li>• If text is detected but not recognized, try adjusting the angle or distance</li>
             </ul>
           </div>
         </div>
