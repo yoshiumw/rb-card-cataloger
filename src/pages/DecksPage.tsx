@@ -14,6 +14,7 @@ export default function DecksPage() {
   const [importText, setImportText] = useState('');
   const [preview, setPreview] = useState<ParsedDecklist | null>(null);
   const [error, setError] = useState('');
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -54,11 +55,20 @@ export default function DecksPage() {
     }
   };
 
-  const handleDelete = (deckId: string, name: string) => {
-    if (confirm(`Delete deck "${name}"?`)) {
-      deleteDeck(deckId);
+  const handleDeleteClick = (deckId: string, name: string) => {
+    setDeleteConfirm({ id: deckId, name });
+  };
+
+  const handleDeleteConfirm = () => {
+    if (deleteConfirm) {
+      deleteDeck(deleteConfirm.id);
       setDecks(getDecks());
+      setDeleteConfirm(null);
     }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteConfirm(null);
   };
 
   return (
@@ -154,9 +164,35 @@ export default function DecksPage() {
             <DeckCard
               key={deck.id}
               deck={deck}
-              onDelete={() => handleDelete(deck.id, deck.name)}
+              onDelete={() => handleDeleteClick(deck.id, deck.name)}
             />
           ))}
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-xl border border-gray-700 p-6 max-w-md w-full">
+            <h3 className="text-lg font-semibold text-white mb-2">Delete Deck</h3>
+            <p className="text-gray-300 mb-6">
+              Are you sure you want to delete "<span className="font-medium text-white">{deleteConfirm.name}</span>"? This action cannot be undone.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={handleDeleteCancel}
+                className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteConfirm}
+                className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -261,28 +297,34 @@ function DeckCard({ deck, onDelete }: { deck: Deck; onDelete: () => void }) {
   const completion = calculateDeckCompletion(deck.parsedDecklist, collection);
   const warnings = validateDecklist(deck.parsedDecklist);
 
-  const handleCardClick = () => {
+  const handleViewDeck = () => {
     navigate(`/decks/${deck.id}`);
   };
 
   return (
     <div className="bg-gray-800 rounded-xl border border-gray-700 p-5 hover:border-gray-600 transition-colors">
+      {/* Header with title and delete button */}
       <div className="flex items-start justify-between mb-3">
-        <div className="flex-1 cursor-pointer" onClick={handleCardClick}>
-          <h3 className="font-semibold text-white">{deck.name}</h3>
+        <div className="flex-1 min-w-0 cursor-pointer" onClick={handleViewDeck}>
+          <h3 className="font-semibold text-white hover:text-purple-400 transition-colors">{deck.name}</h3>
           <p className="text-xs text-gray-400 mt-0.5">
             {new Date(deck.updatedAt).toLocaleDateString()}
           </p>
         </div>
         <button
-          onClick={onDelete}
-          className="p-1.5 rounded-md text-gray-400 hover:text-red-400 hover:bg-red-600/10 transition-colors"
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="ml-2 flex-shrink-0 p-1.5 rounded-md text-gray-400 hover:text-red-400 hover:bg-red-600/10 transition-colors"
         >
           <Trash2 size={16} />
         </button>
       </div>
 
-      <div className="cursor-pointer" onClick={handleCardClick}>
+      {/* Deck stats - clickable to view */}
+      <div className="cursor-pointer" onClick={handleViewDeck}>
         {/* Completion bar */}
         <div className="mb-3">
           <div className="flex items-center justify-between text-sm mb-1">
