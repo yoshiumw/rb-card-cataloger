@@ -6,7 +6,6 @@ import {
   onAuthStateChanged,
   GoogleAuthProvider,
   signInWithRedirect,
-  getRedirectResult,
   User as FirebaseUser
 } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
@@ -49,22 +48,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Firebase mode: handle redirect result and listen to auth state
-    const initAuth = async () => {
-      // Check if we're returning from a redirect sign-in
-      try {
-        const result = await getRedirectResult(auth!);
-        if (result) {
-          // User just completed Google sign-in via redirect
-          console.log('Google sign-in successful via redirect');
-        }
-      } catch (error) {
-        console.error('Error getting redirect result:', error);
-      }
-
-      // Listen to auth state changes
-      const unsubscribe = onAuthStateChanged(auth!, async (firebaseUser: FirebaseUser | null) => {
-        if (firebaseUser) {
+    // Firebase mode: listen to auth state changes
+    // This automatically handles both regular sign-ins and redirect results
+    const unsubscribe = onAuthStateChanged(auth!, async (firebaseUser: FirebaseUser | null) => {
+      console.log('Auth state changed:', firebaseUser?.email || 'null');
+      
+      if (firebaseUser) {
+        try {
           // User is signed in
           const userDocRef = doc(db!, 'users', firebaseUser.uid);
           const userDoc = await getDoc(userDocRef);
@@ -77,24 +67,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           };
         
           setUser(userData);
-        } else {
-          // User is signed out
-          setUser(null);
+        } catch (error) {
+          console.error('Error fetching user data:', error);
+          // Still set basic user data even if Firestore fetch fails
+          setUser({
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            displayName: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Player',
+            photoURL: firebaseUser.photoURL,
+          });
         }
-        setLoading(false);
-      });
-
-      return unsubscribe;
-    };
-
-    let cleanup: (() => void) | undefined;
-    initAuth().then(unsubscribe => {
-      cleanup = unsubscribe;
+      } else {
+        // User is signed out
+        setUser(null);
+      }
+      setLoading(false);
     });
 
-    return () => {
-      if (cleanup) cleanup();
-    };
+    return () => unsubscribe();
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
@@ -196,8 +186,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Firebase mode - use redirect instead of popup to avoid popup blockers
     try {
       const provider = new GoogleAuthProvider();
+      console.log('Initiating Google sign-in redirect...');
       // signInWithRedirect doesn't return a promise that resolves - it initiates redirect
-      signInWithRedirect(auth!, provider);
+      await signInWithRedirect(auth!, provider);
+      console.log('Redirect initiated successfully');
     } catch (err: any) {
       console.error('Google sign-in error:', err);
       const errorMessage = err?.message || err?.code || 'Unknown error';
