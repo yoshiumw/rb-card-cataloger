@@ -131,41 +131,20 @@ export async function searchCardsByName(query: string, page = 1, size = 50): Pro
 }
 
 /**
- * Normalize a card name for matching.
- * Handles both formats:
- *   "Kai'Sa, Survivor" (decklist) → "kaisa survivor"
- *   "Kai'Sa - Survivor" (API) → "kaisa survivor"
- */
-function normalizeName(name: string): string {
-  return name.toLowerCase().replace(/[,']/g, '').replace(/\s*-\s*/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-/**
- * Find best matching card by name from search results
+ * Find best matching card by name using fuzzy search
+ * Trusts the API's fuzzy matching and prefers base cards over alternates
  */
 export async function findCardByName(cardName: string): Promise<Card | null> {
   const { cards } = await searchCardsByName(cardName, 1, 10);
   
   if (cards.length === 0) return null;
   
-  // Try exact match first (case-insensitive)
-  const normalizedName = cardName.toLowerCase().trim();
-  const exactMatch = cards.find(c => 
-    c.displayName.toLowerCase() === normalizedName ||
-    c.cardName.toLowerCase() === normalizedName
+  // Prefer base cards (not alternate art, overnumbered, or signature)
+  const baseCard = cards.find(c => 
+    !c.alternateArt && 
+    !c.cardId.includes('a-') && // overnumbered variant
+    !c.rarity.toLowerCase().includes('signature')
   );
   
-  if (exactMatch) return exactMatch;
-  
-  // Try normalized match (removes commas, apostrophes, converts dashes to spaces)
-  const normalized = normalizeName(cardName);
-  const normalizedMatch = cards.find(c => 
-    normalizeName(c.displayName) === normalized ||
-    normalizeName(c.cardName) === normalized
-  );
-  
-  if (normalizedMatch) return normalizedMatch;
-  
-  // Otherwise return first result (fuzzy match)
-  return cards[0];
+  return baseCard || cards[0];
 }
