@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Plus, Trash2, Edit3, Layers, Eye, AlertTriangle } from 'lucide-react';
 import { getDecks, deleteDeck, previewDecklist, createDeck } from '../services/deckService';
 import { getCollection } from '../services/collectionService';
@@ -256,77 +256,81 @@ function DeckPreview({ parsed }: { parsed: ParsedDecklist }) {
 }
 
 function DeckCard({ deck, onDelete }: { deck: Deck; onDelete: () => void }) {
+  const navigate = useNavigate();
   const collection = getCollection();
   const completion = calculateDeckCompletion(deck.parsedDecklist, collection);
   const warnings = validateDecklist(deck.parsedDecklist);
 
+  const handleCardClick = () => {
+    navigate(`/decks/${deck.id}`);
+  };
+
   return (
-    <Link
-      to={`/decks/${deck.id}`}
-      className="block bg-gray-800 rounded-xl border border-gray-700 p-5 hover:border-gray-600 transition-colors"
-    >
+    <div className="bg-gray-800 rounded-xl border border-gray-700 p-5 hover:border-gray-600 transition-colors">
       <div className="flex items-start justify-between mb-3">
-        <div>
+        <div className="flex-1 cursor-pointer" onClick={handleCardClick}>
           <h3 className="font-semibold text-white">{deck.name}</h3>
           <p className="text-xs text-gray-400 mt-0.5">
             {new Date(deck.updatedAt).toLocaleDateString()}
           </p>
         </div>
         <button
-          onClick={e => { e.stopPropagation(); onDelete(); }}
+          onClick={onDelete}
           className="p-1.5 rounded-md text-gray-400 hover:text-red-400 hover:bg-red-600/10 transition-colors"
         >
           <Trash2 size={16} />
         </button>
       </div>
 
-      {/* Completion bar */}
-      <div className="mb-3">
-        <div className="flex items-center justify-between text-sm mb-1">
-          <span className="text-gray-400">Overall</span>
-          <span className={`font-medium ${
-            completion.overallPercentage >= 100 ? 'text-green-400' :
-            completion.overallPercentage >= 75 ? 'text-yellow-400' : 'text-red-400'
-          }`}>
-            {completion.overallPercentage}%
-          </span>
-        </div>
-        <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${
-              completion.overallPercentage >= 100 ? 'bg-green-500' :
-              completion.overallPercentage >= 75 ? 'bg-yellow-500' : 'bg-red-500'
-            }`}
-            style={{ width: `${Math.min(100, completion.overallPercentage)}%` }}
-          />
-        </div>
-      </div>
-
-      {/* Section stats */}
-      <div className="grid grid-cols-2 gap-2 text-xs">
-        {completion.mainDeckCompletion && (
-          <div className="p-2 rounded bg-gray-700/50">
-            <span className="text-gray-400">Main: </span>
-            <span className="text-white">
-              {completion.mainDeckCompletion.totalOwned + (completion.sections.find(s => s.sectionKey === 'champion')?.totalOwned || 0)}/
-              {completion.mainDeckCompletion.totalRequired + (completion.sections.find(s => s.sectionKey === 'champion')?.totalRequired || 0)}
+      <div className="cursor-pointer" onClick={handleCardClick}>
+        {/* Completion bar */}
+        <div className="mb-3">
+          <div className="flex items-center justify-between text-sm mb-1">
+            <span className="text-gray-400">Overall</span>
+            <span className={`font-medium ${
+              completion.overallPercentage >= 100 ? 'text-green-400' :
+              completion.overallPercentage >= 75 ? 'text-yellow-400' : 'text-red-400'
+            }`}>
+              {completion.overallPercentage}%
             </span>
           </div>
-        )}
-        {completion.sideboardCompletion && (
-          <div className="p-2 rounded bg-gray-700/50">
-            <span className="text-gray-400">Side: </span>
-            <span className="text-white">{completion.sideboardCompletion.totalOwned}/{completion.sideboardCompletion.totalRequired}</span>
+          <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all ${
+                completion.overallPercentage >= 100 ? 'bg-green-500' :
+                completion.overallPercentage >= 75 ? 'bg-yellow-500' : 'bg-red-500'
+              }`}
+              style={{ width: `${Math.min(100, completion.overallPercentage)}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Section stats */}
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          {completion.mainDeckCompletion && (
+            <div className="p-2 rounded bg-gray-700/50">
+              <span className="text-gray-400">Main: </span>
+              <span className="text-white">
+                {completion.mainDeckCompletion.totalOwned + (completion.sections.find(s => s.sectionKey === 'champion')?.totalOwned || 0)}/
+                {completion.mainDeckCompletion.totalRequired + (completion.sections.find(s => s.sectionKey === 'champion')?.totalRequired || 0)}
+              </span>
+            </div>
+          )}
+          {completion.sideboardCompletion && (
+            <div className="p-2 rounded bg-gray-700/50">
+              <span className="text-gray-400">Side: </span>
+              <span className="text-white">{completion.sideboardCompletion.totalOwned}/{completion.sideboardCompletion.totalRequired}</span>
+            </div>
+          )}
+        </div>
+
+        {warnings.length > 0 && (
+          <div className="mt-2 flex items-center gap-1 text-xs text-amber-400">
+            <AlertTriangle size={12} />
+            <span>{warnings.length} warning(s)</span>
           </div>
         )}
       </div>
-
-      {warnings.length > 0 && (
-        <div className="mt-2 flex items-center gap-1 text-xs text-amber-400">
-          <AlertTriangle size={12} />
-          <span>{warnings.length} warning(s)</span>
-        </div>
-      )}
-    </Link>
+    </div>
   );
 }
