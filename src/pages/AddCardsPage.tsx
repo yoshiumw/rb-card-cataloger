@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { PlusCircle, Check, X, Search, AlertCircle, Loader2, Camera } from 'lucide-react';
 import { addCardToCollection } from '../services/collectionService';
-import { getCardById, isValidCardIdFormat } from '../services/cardLookupService';
+import { getCardById, isValidCardIdFormat, normalizeCardId } from '../services/cardLookupService';
 import { useAuth } from '../contexts/AuthContext';
 import { Card, CollectionEntry } from '../types';
 import CameraScanner from '../components/CameraScanner';
@@ -54,8 +54,11 @@ export default function AddCardsPage() {
   }, [inputValue]);
 
   const handleAdd = async () => {
-    const cardId = inputValue.trim();
-    if (!cardId || !user) return;
+    const rawCardId = inputValue.trim();
+    if (!rawCardId || !user) return;
+
+    // Normalize card ID format (convert bullet format to dash format)
+    const cardId = normalizeCardId(rawCardId);
 
     setLoading(true);
     const result = await addCardToCollection(user.uid, cardId);

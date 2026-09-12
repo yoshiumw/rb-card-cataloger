@@ -173,14 +173,35 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           const text = result.data.text;
           console.log('OCR Result:', text);
 
-          // Extract card ID using regex
-          const cardIdPattern = /\b([A-Z]{2,5}-\d{2,4}(?:-\d{2,4})?)\b/i;
-          const match = text.match(cardIdPattern);
+          // Extract card ID using regex - handles multiple formats:
+          // 1. "SFD • 100/1xx" (actual card format with bullet and set size)
+          // 2. "SFD-100" (API format)
+          // 3. "SFD-100-298" (API format with set size)
+          
+          let cardId = null;
+          
+          // Try to match "SET • NUMBER/TOTAL" format first
+          const bulletPattern = /\b([A-Z]{2,5})\s*[•·]\s*(\d{1,4})(?:\/\d{1,4})?\b/i;
+          const bulletMatch = text.match(bulletPattern);
+          
+          if (bulletMatch) {
+            // Convert "SFD • 100/1xx" to "SFD-100"
+            const setCode = bulletMatch[1].toUpperCase();
+            const cardNumber = bulletMatch[2];
+            cardId = `${setCode}-${cardNumber}`;
+          } else {
+            // Try standard dash format
+            const dashPattern = /\b([A-Z]{2,5}-\d{2,4}(?:-\d{2,4})?)\b/i;
+            const dashMatch = text.match(dashPattern);
+            
+            if (dashMatch) {
+              cardId = dashMatch[1].toUpperCase();
+            }
+          }
 
-          if (match) {
-            const cardId = match[1].toUpperCase();
+          if (cardId) {
             console.log('Card ID detected:', cardId);
-            setScanningStatus(`Found: ${cardId}`);
+            setScanningStatus(`✓ Found: ${cardId}`);
             
             // Stop scanning and notify parent
             setIsScanning(false);
@@ -188,13 +209,16 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             
             // Small delay before callback to show success message
             setTimeout(() => {
-              onCardIdDetected(cardId);
+              onCardIdDetected(cardId!);
             }, 500);
             return;
           }
 
+          // Show what OCR detected for debugging
           if (isScanning) {
-            setScanningStatus('No card ID found. Adjust position...');
+            const previewText = text.trim().substring(0, 60).replace(/\s+/g, ' ');
+            console.log('OCR detected:', previewText);
+            setScanningStatus(`Reading: "${previewText}"`);
           }
         } catch (err) {
           console.error('OCR error:', err);

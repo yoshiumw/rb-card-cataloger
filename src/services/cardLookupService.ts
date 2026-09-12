@@ -210,7 +210,38 @@ export function cacheCard(card: Card): void {
 /**
  * Check if a card ID format is valid
  */
+/**
+ * Validate card ID format
+ * Accepts formats like: VEN-131, OGN-039, OGN-039-298
+ * Also accepts bullet format: SFD • 100/1xx (converts to SFD-100)
+ */
 export function isValidCardIdFormat(cardId: string): boolean {
-  const pattern = /^[A-Za-z]+-\d+(-\d+)?$/;
-  return pattern.test(cardId.trim());
+  const trimmed = cardId.trim();
+  
+  // Standard dash format
+  const dashPattern = /^[A-Z]{2,5}-\d{2,4}(-\d{2,4})?$/i;
+  if (dashPattern.test(trimmed)) {
+    return true;
+  }
+  
+  // Bullet format (from physical cards)
+  const bulletPattern = /^[A-Z]{2,5}\s*[•·]\s*\d{1,4}(\/\d{1,4})?$/i;
+  return bulletPattern.test(trimmed);
+}
+
+/**
+ * Normalize card ID format
+ * Converts "SFD • 100/1xx" to "SFD-100"
+ */
+export function normalizeCardId(cardId: string): string {
+  const trimmed = cardId.trim().toUpperCase();
+  
+  // Check if it's bullet format
+  const bulletMatch = trimmed.match(/^([A-Z]{2,5})\s*[•·]\s*(\d{1,4})(?:\/\d{1,4})?$/);
+  if (bulletMatch) {
+    return `${bulletMatch[1]}-${bulletMatch[2]}`;
+  }
+  
+  // Already in dash format or unknown format
+  return trimmed;
 }
