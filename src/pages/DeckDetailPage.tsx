@@ -99,11 +99,19 @@ export default function DeckDetailPage() {
   const completion = calculateDeckCompletion(deck.parsedDecklist, collection);
   const warnings = validateDecklist(deck.parsedDecklist);
 
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
   const handleDelete = () => {
-    if (confirm(`Delete deck "${deck.name}"?`)) {
-      deleteDeck(deck.id);
-      navigate('/decks');
-    }
+    setShowDeleteConfirm(true);
+  };
+
+  const handleDeleteConfirm = () => {
+    deleteDeck(deck.id);
+    navigate('/decks');
+  };
+
+  const handleDeleteCancel = () => {
+    setShowDeleteConfirm(false);
   };
 
   const handleSaveEdit = () => {
@@ -262,6 +270,32 @@ export default function DeckDetailPage() {
       {!editing && completion.sections.map(section => (
         <SectionDetail key={section.sectionKey} section={section} />
       ))}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-xl border border-gray-700 p-6 max-w-md w-full">
+            <h3 className="text-lg font-semibold text-white mb-2">Delete Deck</h3>
+            <p className="text-gray-300 mb-6">
+              Are you sure you want to delete "<span className="font-medium text-white">{deck.name}</span>"? This action cannot be undone.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={handleDeleteCancel}
+                className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteConfirm}
+                className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
