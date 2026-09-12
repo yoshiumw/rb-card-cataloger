@@ -44,8 +44,14 @@ export async function fetchCardById(riftboundId: string): Promise<Card | null> {
       throw new Error(`HTTP ${response.status}`);
     }
     
-    const data: RiftboundCard = await response.json();
-    return mapApiCardToCard(data);
+    const data: RiftboundCard[] = await response.json();
+    
+    // API returns an array; pick the first result
+    if (!Array.isArray(data) || data.length === 0) return null;
+    
+    // Prefer non-alternate-art, non-signature, non-overnumbered version
+    const preferred = data.find(c => !c.metadata.alternate_art && !c.metadata.signature && !c.metadata.overnumbered) || data[0];
+    return mapApiCardToCard(preferred);
   } catch (error) {
     console.error('Error fetching card by ID:', error);
     return null;

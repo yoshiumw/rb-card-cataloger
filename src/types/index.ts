@@ -14,7 +14,7 @@ export interface RiftboundCard {
   id: string;
   name: string;
   riftbound_id: string;
-  tcgplayer_id?: string;
+  tcgplayer_id?: string | null;
   collector_number: number;
   attributes: {
     energy: number | null;
@@ -44,7 +44,7 @@ export interface RiftboundCard {
   tags: string[];
   orientation: string;
   metadata: {
-    clean_name: string;
+    clean_name: string | null;
     updated_on: string;
     alternate_art: boolean;
     overnumbered: boolean;
