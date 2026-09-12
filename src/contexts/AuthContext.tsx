@@ -1,4 +1,15 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut, 
+  onAuthStateChanged,
+  GoogleAuthProvider,
+  signInWithPopup,
+  User as FirebaseUser
+} from 'firebase/auth';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { auth, db, isFirebaseConfigured } from '../firebase/config';
 import { User } from '../types';
 
 interface AuthContextType {
@@ -27,64 +38,160 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Check if user is logged in (demo mode)
-    const storedUser = localStorage.getItem('riftbound_user');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
+    if (!isFirebaseConfigured || !auth) {
+      // Demo mode: check localStorage
+      const storedUser = localStorage.getItem('riftbound_user');
+      if (storedUser) {
+        setUser(JSON.parse(storedUser));
+      }
+      setLoading(false);
+      return;
     }
-    setLoading(false);
+
+    // Firebase mode: listen to auth state
+    const unsubscribe = onAuthStateChanged(auth!, async (firebaseUser: FirebaseUser | null) => {
+      if (firebaseUser) {
+        // User is signed in
+        const userDocRef = doc(db!, 'users', firebaseUser.uid);
+        const userDoc = await getDoc(userDocRef);
+        
+        const userData: User = {
+          uid: firebaseUser.uid,
+          email: firebaseUser.email,
+          displayName: firebaseUser.displayName || userDoc.data()?.displayName || firebaseUser.email?.split('@')[0] || 'Player',
+          photoURL: firebaseUser.photoURL,
+        };
+        
+        setUser(userData);
+      } else {
+        // User is signed out
+        setUser(null);
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  const login = useCallback(async (email: string, _password: string) => {
+  const login = useCallback(async (email: string, password: string) => {
     setError(null);
+    
+    if (!isFirebaseConfigured || !auth) {
+      // Demo mode
+      try {
+        const demoUser: User = {
+          uid: 'demo-user-001',
+          email,
+          displayName: email.split('@')[0],
+        };
+        setUser(demoUser);
+        localStorage.setItem('riftbound_user', JSON.stringify(demoUser));
+      } catch (err) {
+        setError('Login failed. Please try again.');
+      }
+      return;
+    }
+
+    // Firebase mode
     try {
-      // Demo mode: accept any credentials
-      const demoUser: User = {
-        uid: 'demo-user-001',
-        email,
-        displayName: email.split('@')[0],
-      };
-      setUser(demoUser);
-      localStorage.setItem('riftbound_user', JSON.stringify(demoUser));
-    } catch (err) {
-      setError('Login failed. Please try again.');
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (err: any) {
+      const errorCode = err.code;
+      if (errorCode === 'auth/user-not-found' || errorCode === 'auth/wrong-password') {
+        setError('Invalid email or password.');
+      } else if (errorCode === 'auth/too-many-requests') {
+        setError('Too many failed attempts. Please try again later.');
+      } else {
+        setError('Login failed. Please try again.');
+      }
     }
   }, []);
 
-  const register = useCallback(async (email: string, _password: string, displayName: string) => {
+  const register = useCallback(async (email: string, password: string, displayName: string) => {
     setError(null);
+    
+    if (!isFirebaseConfigured || !auth) {
+      // Demo mode
+      try {
+        const newUser: User = {
+          uid: 'demo-user-001',
+          email,
+          displayName: displayName || email.split('@')[0],
+        };
+        setUser(newUser);
+        localStorage.setItem('riftbound_user', JSON.stringify(newUser));
+      } catch (err) {
+        setError('Registration failed. Please try again.');
+      }
+      return;
+    }
+
+    // Firebase mode
     try {
-      const newUser: User = {
-        uid: 'demo-user-001',
-        email,
+      const userCredential = await createUserWithEmailAndPassword(auth!, email, password);
+      
+      // Create user document in Firestore
+      const userDocRef = doc(db!, 'users', userCredential.user.uid);
+      await setDoc(userDocRef, {
+        email: email,
         displayName: displayName || email.split('@')[0],
-      };
-      setUser(newUser);
-      localStorage.setItem('riftbound_user', JSON.stringify(newUser));
-    } catch (err) {
-      setError('Registration failed. Please try again.');
+        createdAt: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      const errorCode = err.code;
+      if (errorCode === 'auth/email-already-in-use') {
+        setError('Email already in use.');
+      } else if (errorCode === 'auth/weak-password') {
+        setError('Password should be at least 6 characters.');
+      } else {
+        setError('Registration failed. Please try again.');
+      }
     }
   }, []);
 
   const loginWithGoogle = useCallback(async () => {
     setError(null);
+    
+    if (!isFirebaseConfigured || !auth) {
+      // Demo mode
+      try {
+        const googleUser: User = {
+          uid: 'demo-google-user',
+          email: 'player@gmail.com',
+          displayName: 'Google Player',
+          photoURL: null,
+        };
+        setUser(googleUser);
+        localStorage.setItem('riftbound_user', JSON.stringify(googleUser));
+      } catch (err) {
+        setError('Google sign-in failed. Please try again.');
+      }
+      return;
+    }
+
+    // Firebase mode
     try {
-      const googleUser: User = {
-        uid: 'demo-google-user',
-        email: 'player@gmail.com',
-        displayName: 'Google Player',
-        photoURL: null,
-      };
-      setUser(googleUser);
-      localStorage.setItem('riftbound_user', JSON.stringify(googleUser));
-    } catch (err) {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth!, provider);
+    } catch (err: any) {
       setError('Google sign-in failed. Please try again.');
     }
   }, []);
 
   const logout = useCallback(async () => {
-    setUser(null);
-    localStorage.removeItem('riftbound_user');
+    if (!isFirebaseConfigured || !auth) {
+      // Demo mode
+      setUser(null);
+      localStorage.removeItem('riftbound_user');
+      return;
+    }
+
+    // Firebase mode
+    try {
+      await signOut(auth);
+    } catch (err) {
+      setError('Logout failed. Please try again.');
+    }
   }, []);
 
   const clearError = useCallback(() => setError(null), []);
@@ -98,6 +205,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (!context) throw new Error('useAuth must be used within AuthProvider');
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
   return context;
 }
