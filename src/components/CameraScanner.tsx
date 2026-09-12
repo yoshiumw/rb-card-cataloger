@@ -16,144 +16,204 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
   const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
-    startCamera();
+    let mounted = true;
+    
+    const initCamera = async () => {
+      try {
+        setError(null);
+        setScanningStatus('Requesting camera access...');
+        
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        });
+        
+        if (!mounted) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        
+        streamRef.current = stream;
+        
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          
+          // iOS Safari requires explicit play() call
+          try {
+            await videoRef.current.play();
+          } catch (playErr) {
+            console.error('Error playing video:', playErr);
+          }
+          
+          setScanningStatus('Camera ready. Position card ID in the frame.');
+          
+          // Start scanning after video is loaded
+          videoRef.current.onloadedmetadata = () => {
+            if (mounted) {
+              startScanning();
+            }
+          };
+        }
+      } catch (err) {
+        if (!mounted) return;
+        
+        console.error('Error accessing camera:', err);
+        if (err instanceof Error) {
+          if (err.name === 'NotAllowedError') {
+            setError('Camera permission denied. Please allow camera access in your browser settings.');
+          } else if (err.name === 'NotFoundError') {
+            setError('No camera found. Please connect a camera or use manual entry.');
+          } else {
+            setError(`Camera error: ${err.message}`);
+          }
+        } else {
+          setError('Failed to access camera. Please check permissions.');
+        }
+      }
+    };
+    
+    initCamera();
+    
     return () => {
+      mounted = false;
       stopCamera();
     };
   }, []);
 
-  const startCamera = async () => {
-    try {
-      setError(null);
-      setScanningStatus('Requesting camera access...');
-      
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'environment', // Use rear camera on mobile
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      });
-      
-      streamRef.current = stream;
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        setScanningStatus('Camera ready. Position card ID in the frame.');
-        
-        // Start scanning after video is loaded
-        videoRef.current.onloadedmetadata = () => {
-          startScanning();
-        };
-      }
-    } catch (err) {
-      console.error('Error accessing camera:', err);
-      if (err instanceof Error) {
-        if (err.name === 'NotAllowedError') {
-          setError('Camera permission denied. Please allow camera access in your browser settings.');
-        } else if (err.name === 'NotFoundError') {
-          setError('No camera found. Please connect a camera or use manual entry.');
-        } else {
-          setError(`Camera error: ${err.message}`);
-        }
-      } else {
-        setError('Failed to access camera. Please check permissions.');
-      }
-    }
-  };
-
   const stopCamera = () => {
+    setIsScanning(false);
+    
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current.getTracks().forEach(track => {
+        track.stop();
+      });
       streamRef.current = null;
+    }
+    
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
     }
   };
 
   const startScanning = () => {
-    setIsScanning(true);
-    scanFrame();
+    // Delay start to ensure video is fully ready (especially for iOS)
+    setTimeout(() => {
+      setIsScanning(true);
+      scanFrame();
+    }, 500);
   };
 
   const scanFrame = async () => {
-    if (!isScanning || !videoRef.current || !canvasRef.current) return;
-
+    // Check if we should continue scanning
+    if (!isScanning) return;
+    
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    const context = canvas.getContext('2d');
-
-    if (!context) return;
-
-    // Set canvas size to match video
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
-    // Draw video frame to canvas
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    // Crop the bottom-left region where card ID typically appears
-    // Adjust these values based on typical card layout
-    const cropWidth = canvas.width * 0.3; // 30% of width
-    const cropHeight = canvas.height * 0.15; // 15% of height
-    const cropX = 0; // Left edge
-    const cropY = canvas.height - cropHeight; // Bottom edge
-
-    // Extract the region
-    const imageData = context.getImageData(cropX, cropY, cropWidth, cropHeight);
-
-    // Create a temporary canvas for the cropped region
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = cropWidth;
-    tempCanvas.height = cropHeight;
-    const tempContext = tempCanvas.getContext('2d');
     
-    if (tempContext) {
-      tempContext.putImageData(imageData, 0, 0);
-      
-      // Convert to data URL for Tesseract
-      const imageUrl = tempCanvas.toDataURL('image/png');
-
-      try {
-        setScanningStatus('Processing image...');
-        
-        // Use Tesseract to recognize text
-        const result = await Tesseract.recognize(imageUrl, 'eng', {
-          logger: (m) => {
-            if (m.status === 'recognizing text') {
-              setScanningStatus(`Recognizing... ${Math.round(m.progress * 100)}%`);
-            }
-          }
-        });
-
-        const text = result.data.text;
-        console.log('OCR Result:', text);
-
-        // Extract card ID using regex
-        // Pattern: LETTERS-NUMBERS or LETTERS-NUMBERS-NUMBERS
-        const cardIdPattern = /\b([A-Z]{2,5}-\d{2,4}(?:-\d{2,4})?)\b/i;
-        const match = text.match(cardIdPattern);
-
-        if (match) {
-          const cardId = match[1].toUpperCase();
-          console.log('Card ID detected:', cardId);
-          setScanningStatus(`Found: ${cardId}`);
-          
-          // Stop scanning and notify parent
-          setIsScanning(false);
-          stopCamera();
-          onCardIdDetected(cardId);
-          return;
-        }
-
-        setScanningStatus('No card ID found. Adjust position...');
-      } catch (err) {
-        console.error('OCR error:', err);
-        setScanningStatus('Processing error. Retrying...');
+    // Ensure video and canvas are ready
+    if (!video || !canvas || video.readyState < 2) {
+      // Video not ready yet, try again
+      if (isScanning) {
+        setTimeout(scanFrame, 100);
       }
+      return;
     }
 
-    // Continue scanning if still active
-    if (isScanning) {
-      setTimeout(scanFrame, 1000); // Scan every second
+    const context = canvas.getContext('2d');
+    if (!context) return;
+
+    try {
+      // Set canvas size to match video
+      canvas.width = video.videoWidth || 1280;
+      canvas.height = video.videoHeight || 720;
+
+      // Draw video frame to canvas
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // Crop the bottom-left region where card ID typically appears
+      const cropWidth = Math.floor(canvas.width * 0.3);
+      const cropHeight = Math.floor(canvas.height * 0.15);
+      const cropX = 0;
+      const cropY = canvas.height - cropHeight;
+
+      // Extract the region
+      const imageData = context.getImageData(cropX, cropY, cropWidth, cropHeight);
+
+      // Create a temporary canvas for the cropped region
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = cropWidth;
+      tempCanvas.height = cropHeight;
+      const tempContext = tempCanvas.getContext('2d');
+      
+      if (tempContext) {
+        tempContext.putImageData(imageData, 0, 0);
+        
+        // Convert to data URL for Tesseract
+        const imageUrl = tempCanvas.toDataURL('image/png');
+
+        try {
+          if (!isScanning) return; // Check again before processing
+          
+          setScanningStatus('Processing image...');
+          
+          // Use Tesseract to recognize text
+          const result = await Tesseract.recognize(imageUrl, 'eng', {
+            logger: (m) => {
+              if (m.status === 'recognizing text' && isScanning) {
+                setScanningStatus(`Recognizing... ${Math.round(m.progress * 100)}%`);
+              }
+            }
+          });
+
+          if (!isScanning) return; // Check again after processing
+
+          const text = result.data.text;
+          console.log('OCR Result:', text);
+
+          // Extract card ID using regex
+          const cardIdPattern = /\b([A-Z]{2,5}-\d{2,4}(?:-\d{2,4})?)\b/i;
+          const match = text.match(cardIdPattern);
+
+          if (match) {
+            const cardId = match[1].toUpperCase();
+            console.log('Card ID detected:', cardId);
+            setScanningStatus(`Found: ${cardId}`);
+            
+            // Stop scanning and notify parent
+            setIsScanning(false);
+            stopCamera();
+            
+            // Small delay before callback to show success message
+            setTimeout(() => {
+              onCardIdDetected(cardId);
+            }, 500);
+            return;
+          }
+
+          if (isScanning) {
+            setScanningStatus('No card ID found. Adjust position...');
+          }
+        } catch (err) {
+          console.error('OCR error:', err);
+          if (isScanning) {
+            setScanningStatus('Processing error. Retrying...');
+          }
+        }
+      }
+
+      // Continue scanning if still active
+      if (isScanning) {
+        setTimeout(scanFrame, 1500); // Scan every 1.5 seconds
+      }
+    } catch (err) {
+      console.error('Error in scanFrame:', err);
+      if (isScanning) {
+        setScanningStatus('Scanning error. Retrying...');
+        setTimeout(scanFrame, 1500);
+      }
     }
   };
 
@@ -198,7 +258,9 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
               autoPlay
               playsInline
               muted
+              controls={false}
               className="max-w-full max-h-full object-contain"
+              style={{ transform: 'scale(1)' }}
             />
             <canvas ref={canvasRef} className="hidden" />
             
