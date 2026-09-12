@@ -114,11 +114,16 @@ export default function DashboardPage() {
             <div className="space-y-2">
               {recentCards.map(card => (
                 <div key={card.cardId} className="flex items-center justify-between p-3 rounded-lg bg-gray-700/50">
-                  <div>
-                    <p className="text-sm font-medium text-white">{card.cardName}</p>
-                    <p className="text-xs text-gray-400">{card.set} • {card.cardId}</p>
+                  <div className="flex items-center gap-3 min-w-0">
+                    {card.imageUrl && (
+                      <img src={card.imageUrl} alt="" className="w-8 h-11 rounded object-cover flex-shrink-0" />
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-white truncate">{card.displayName || card.cardName}</p>
+                      <p className="text-xs text-gray-400">{card.set} • {card.cardId}</p>
+                    </div>
                   </div>
-                  <span className="text-sm font-medium text-purple-300">×{card.quantity}</span>
+                  <span className="text-sm font-medium text-purple-300 flex-shrink-0">×{card.quantity}</span>
                 </div>
               ))}
             </div>

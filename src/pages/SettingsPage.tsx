@@ -1,12 +1,14 @@
 import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { User, Shield, Database, Info } from 'lucide-react';
-import { getDatabaseSize, getAllSets } from '../services/cardLookupService';
+import { getCacheSize, getCachedSets } from '../services/cardLookupService';
+import { getCollectionAsArray } from '../services/collectionService';
 
 export default function SettingsPage() {
   const { user, logout } = useAuth();
-  const dbSize = getDatabaseSize();
-  const sets = getAllSets();
+  const cacheSize = getCacheSize();
+  const cachedSets = getCachedSets();
+  const collectionSize = getCollectionAsArray().length;
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -44,7 +46,7 @@ export default function SettingsPage() {
         </button>
       </div>
 
-      {/* Database Info */}
+      {/* Card Database Info */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-5">
         <div className="flex items-center gap-3 mb-4">
           <Database size={20} className="text-blue-400" />
@@ -52,23 +54,32 @@ export default function SettingsPage() {
         </div>
         <div className="space-y-3">
           <div className="flex items-center justify-between p-3 rounded-lg bg-gray-700/30">
-            <span className="text-sm text-gray-400">Total Cards in Database</span>
-            <span className="text-sm text-white font-medium">{dbSize}</span>
+            <span className="text-sm text-gray-400">Cards Cached Locally</span>
+            <span className="text-sm text-white font-medium">{cacheSize}</span>
           </div>
           <div className="flex items-center justify-between p-3 rounded-lg bg-gray-700/30">
-            <span className="text-sm text-gray-400">Available Sets</span>
-            <span className="text-sm text-white font-medium">{sets.length}</span>
+            <span className="text-sm text-gray-400">Sets in Cache</span>
+            <span className="text-sm text-white font-medium">{cachedSets.length}</span>
           </div>
-          <div className="p-3 rounded-lg bg-gray-700/30">
-            <span className="text-sm text-gray-400">Sets:</span>
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              {sets.map(set => (
-                <span key={set} className="text-xs px-2 py-1 rounded-full bg-purple-600/20 text-purple-300 border border-purple-500/30">
-                  {set}
-                </span>
-              ))}
+          <div className="flex items-center justify-between p-3 rounded-lg bg-gray-700/30">
+            <span className="text-sm text-gray-400">Cards in Collection</span>
+            <span className="text-sm text-white font-medium">{collectionSize}</span>
+          </div>
+          {cachedSets.length > 0 && (
+            <div className="p-3 rounded-lg bg-gray-700/30">
+              <span className="text-sm text-gray-400">Cached Sets:</span>
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {cachedSets.map((set: string) => (
+                  <span key={set} className="text-xs px-2 py-1 rounded-full bg-purple-600/20 text-purple-300 border border-purple-500/30">
+                    {set}
+                  </span>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
+          <p className="text-xs text-gray-500">
+            Cards are cached locally as you look them up. The full database is available via the Riftbound API (riftcodex.com).
+          </p>
         </div>
       </div>
 
@@ -76,13 +87,13 @@ export default function SettingsPage() {
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-5">
         <div className="flex items-center gap-3 mb-4">
           <Shield size={20} className="text-green-400" />
-          <h2 className="text-lg font-semibold text-white">Privacy & Security</h2>
+          <h2 className="text-lg font-semibold text-white">Privacy & Data</h2>
         </div>
         <div className="space-y-2 text-sm text-gray-300">
-          <p>• Your collection and decklists are stored locally in this demo.</p>
-          <p>• In production with Firebase, each user's data is private and isolated.</p>
-          <p>• Firestore security rules ensure users can only access their own data.</p>
-          <p>• The global card database is shared and read-only for all users.</p>
+          <p>• Your collection and decklists are stored locally in your browser.</p>
+          <p>• Card data is fetched from the public Riftbound API (riftcodex.com).</p>
+          <p>• No personal data is sent to external servers.</p>
+          <p>• Clearing your browser data will reset your collection and decks.</p>
         </div>
       </div>
 
@@ -96,7 +107,10 @@ export default function SettingsPage() {
           <p><strong className="text-white">Riftbound Card Cataloger</strong> v1.0.0</p>
           <p>A collection management and deck-building utility for the Riftbound trading card game.</p>
           <p className="text-gray-400 mt-3">
-            Built with React, TypeScript, Tailwind CSS, and Firebase.
+            Card data provided by <a href="https://riftcodex.com" target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:text-purple-300 underline">RiftCodex</a>.
+          </p>
+          <p className="text-gray-400">
+            Built with React, TypeScript, and Tailwind CSS.
           </p>
         </div>
       </div>

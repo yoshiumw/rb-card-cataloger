@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Search, Filter, SortAsc, SortDesc, Trash2, Minus, Plus, Library } from 'lucide-react';
-import { getCollectionAsArray, removeCardFromCollection, updateCardQuantity } from '../services/collectionService';
-import { getAllSets } from '../services/cardLookupService';
+import { getCollectionAsArray, removeCardFromCollection, updateCardQuantity, getCollectionSets } from '../services/collectionService';
 import { CollectionEntry } from '../types';
 
 type SortField = 'name' | 'set' | 'type' | 'quantity' | 'added';
@@ -14,12 +13,12 @@ export default function CollectionPage() {
   const [typeFilter, setTypeFilter] = useState('');
   const [sortField, setSortField] = useState<SortField>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
-  const [sets, setSets] = useState<string[]>([]);
 
   useEffect(() => {
     setCollection(getCollectionAsArray());
-    setSets(getAllSets());
   }, []);
+
+  const sets = useMemo(() => getCollectionSets(), [collection]);
 
   const cardTypes = useMemo(() => {
     const types = new Set(collection.map(c => c.cardType));
@@ -29,27 +28,24 @@ export default function CollectionPage() {
   const filtered = useMemo(() => {
     let result = [...collection];
 
-    // Search filter
     if (search.trim()) {
       const q = search.toLowerCase();
       result = result.filter(c =>
         c.cardName.toLowerCase().includes(q) ||
+        c.displayName.toLowerCase().includes(q) ||
         c.cardId.toLowerCase().includes(q) ||
         c.set.toLowerCase().includes(q)
       );
     }
 
-    // Set filter
     if (setFilter) {
       result = result.filter(c => c.set === setFilter);
     }
 
-    // Type filter
     if (typeFilter) {
       result = result.filter(c => c.cardType === typeFilter);
     }
 
-    // Sort
     result.sort((a, b) => {
       let cmp = 0;
       switch (sortField) {
@@ -110,7 +106,6 @@ export default function CollectionPage() {
       {/* Filters */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {/* Search */}
           <div className="relative sm:col-span-2">
             <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
@@ -122,7 +117,6 @@ export default function CollectionPage() {
             />
           </div>
 
-          {/* Set Filter */}
           <div className="relative">
             <Filter size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <select
@@ -135,7 +129,6 @@ export default function CollectionPage() {
             </select>
           </div>
 
-          {/* Type Filter */}
           <div className="relative">
             <Filter size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <select
@@ -149,7 +142,6 @@ export default function CollectionPage() {
           </div>
         </div>
 
-        {/* Sort buttons */}
         <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-gray-700">
           <span className="text-xs text-gray-400 self-center mr-2">Sort by:</span>
           {(['name', 'set', 'type', 'quantity', 'added'] as SortField[]).map(field => (
@@ -211,24 +203,39 @@ function CardItem({ card, onQuantityChange, onRemove }: {
     Equipment: 'from-orange-600/20 to-red-600/20 border-orange-500/30',
     Battlefield: 'from-green-600/20 to-emerald-600/20 border-green-500/30',
     Rune: 'from-indigo-600/20 to-violet-600/20 border-indigo-500/30',
+    Legend: 'from-amber-600/20 to-yellow-600/20 border-amber-500/30',
   };
 
   const gradient = typeColors[card.cardType] || 'from-gray-600/20 to-gray-600/20 border-gray-500/30';
 
   return (
     <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden hover:border-gray-600 transition-colors">
-      {/* Card image placeholder */}
-      <div className={`h-28 bg-gradient-to-br ${gradient} border-b flex items-center justify-center relative`}>
-        <span className="text-2xl font-bold text-white/30">{card.cardNumber}</span>
-        <span className="absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full bg-black/30 text-white/70">
+      {/* Card image */}
+      <div className={`h-32 bg-gradient-to-br ${gradient} border-b flex items-center justify-center relative overflow-hidden`}>
+        {card.imageUrl ? (
+          <img 
+            src={card.imageUrl} 
+            alt={card.cardName}
+            className="w-full h-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <span className="text-2xl font-bold text-white/30">{card.cardNumber}</span>
+        )}
+        <span className="absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full bg-black/50 text-white/80 backdrop-blur-sm">
           {card.cardType}
         </span>
+        {card.rarity && (
+          <span className="absolute top-2 left-2 text-xs px-2 py-0.5 rounded-full bg-black/50 text-white/80 backdrop-blur-sm">
+            {card.rarity}
+          </span>
+        )}
       </div>
 
       {/* Card info */}
       <div className="p-3">
         <h3 className="font-medium text-white text-sm truncate" title={card.cardName}>
-          {card.cardName}
+          {card.displayName || card.cardName}
         </h3>
         <p className="text-xs text-gray-400 mt-0.5">{card.set} • {card.cardId}</p>
 

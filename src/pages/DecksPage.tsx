@@ -105,7 +105,7 @@ export default function DecksPage() {
             <textarea
               value={importText}
               onChange={e => setImportText(e.target.value)}
-              placeholder={`Legend:\n1 Akali, Rogue Assassin\n\nChampion:\n1 Akali, Deadly Weapon\n\nMainDeck:\n3 Kai'Sa, Survivor\n...`}
+              placeholder={`Legend:\n1 Kai'Sa - Daughter of the Void\n\nChampion:\n1 Kai'Sa - Survivor\n\nMainDeck:\n3 Scuttle Crab\n3 Stellacorn Herder\n2 Defy\n2 Long Sword\n...\n\nBattlefields:\n1 Void Gate\n\nRune Pool:\n6 Fury Rune\n\nSideboard:\n2 Ferrous Forerunner\n1 Defy`}
               rows={12}
               className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm resize-y"
             />

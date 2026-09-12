@@ -1,134 +1,171 @@
 import { Card } from '../types';
-import { sampleCards } from '../data/cardDatabase';
+import { fetchCardById, findCardByName, searchCardsByName } from './apiService';
 
 /**
  * Card Lookup Service
  * 
  * Architecture:
- *   Card ID → Card Lookup Service → Card Database → Result
+ *   Card ID → Card Lookup Service → API (riftcodex.com) → Result
  * 
  * This service is designed to be independent of the input method.
  * Later, both manual entry and camera scanning can feed into this same service.
  * 
- * Currently uses localStorage as a local card database.
- * In production, this would query Firestore's /cards collection.
+ * Uses the riftcodex.com API with local caching for performance.
  */
 
-// In-memory cache for quick lookups
-let cardCache: Map<string, Card> = new Map();
-let nameCache: Map<string, Card> = new Map();
+// In-memory cache for quick lookups (avoids repeated API calls)
+const cardCache = new Map<string, Card>();
+const nameCache = new Map<string, Card>();
 
-function initializeCache() {
-  const stored = localStorage.getItem('riftbound_card_database');
-  if (stored) {
-    const cards: Card[] = JSON.parse(stored);
-    cardCache = new Map(cards.map(c => [c.cardId.toLowerCase(), c]));
-    nameCache = new Map(cards.map(c => [c.cardName.toLowerCase(), c]));
-  } else {
-    cardCache = new Map(sampleCards.map(c => [c.cardId.toLowerCase(), c]));
-    nameCache = new Map(sampleCards.map(c => [c.cardName.toLowerCase(), c]));
+// Pending requests to avoid duplicate API calls
+const pendingRequests = new Map<string, Promise<Card | null>>();
+
+/**
+ * Look up a card by its Riftbound ID (e.g., "ven-131" or "OGN-039-298")
+ * Uses cache first, then falls back to API.
+ * @param cardId - The card identifier
+ * @returns The card data if found, null otherwise
+ */
+export async function getCardById(cardId: string): Promise<Card | null> {
+  const normalizedId = cardId.trim().toLowerCase();
+  
+  // Check cache first
+  const cached = cardCache.get(normalizedId);
+  if (cached) return cached;
+  
+  // Check if there's already a pending request for this ID
+  const pending = pendingRequests.get(normalizedId);
+  if (pending) return pending;
+  
+  // Fetch from API
+  const request = fetchCardById(normalizedId);
+  pendingRequests.set(normalizedId, request);
+  
+  try {
+    const card = await request;
+    if (card) {
+      cardCache.set(normalizedId, card);
+      nameCache.set(card.cardName.toLowerCase(), card);
+      nameCache.set(card.displayName.toLowerCase(), card);
+    }
+    return card;
+  } finally {
+    pendingRequests.delete(normalizedId);
   }
 }
 
-initializeCache();
-
 /**
- * Look up a card by its ID
- * @param cardId - The card identifier (e.g., "CR-001" or "XYZ-123")
+ * Look up a card by its name (uses API fuzzy search)
+ * @param cardName - The card name (decklist format: "Kai'Sa, Survivor")
  * @returns The card data if found, null otherwise
  */
-export function getCardById(cardId: string): Card | null {
-  const normalizedId = cardId.trim().toLowerCase();
-  return cardCache.get(normalizedId) || null;
-}
-
-/**
- * Look up a card by its name
- * @param cardName - The exact card name
- * @returns The card data if found, null otherwise
- */
-export function getCardByName(cardName: string): Card | null {
+export async function getCardByName(cardName: string): Promise<Card | null> {
   const normalizedName = cardName.trim().toLowerCase();
-  return nameCache.get(normalizedName) || null;
+  
+  // Check cache first
+  const cached = nameCache.get(normalizedName);
+  if (cached) return cached;
+  
+  // Also try with dash format
+  const dashName = cardName.replace(/,\s*/g, ' - ').toLowerCase();
+  const cachedDash = nameCache.get(dashName);
+  if (cachedDash) return cachedDash;
+  
+  // Check pending
+  const pending = pendingRequests.get(`name:${normalizedName}`);
+  if (pending) return pending;
+  
+  // Fetch from API
+  const request = findCardByName(cardName);
+  pendingRequests.set(`name:${normalizedName}`, request);
+  
+  try {
+    const card = await request;
+    if (card) {
+      cardCache.set(card.cardId.toLowerCase(), card);
+      nameCache.set(card.cardName.toLowerCase(), card);
+      nameCache.set(card.displayName.toLowerCase(), card);
+    }
+    return card;
+  } finally {
+    pendingRequests.delete(`name:${normalizedName}`);
+  }
 }
 
 /**
- * Search cards by partial name or ID
+ * Search cards by partial name or ID (uses API)
  * @param query - Search query
  * @returns Array of matching cards
  */
-export function searchCards(query: string): Card[] {
-  const normalizedQuery = query.trim().toLowerCase();
-  if (!normalizedQuery) return [];
+export async function searchCards(query: string): Promise<Card[]> {
+  if (!query.trim()) return [];
   
-  const results: Card[] = [];
-  cardCache.forEach(card => {
-    if (
-      card.cardName.toLowerCase().includes(normalizedQuery) ||
-      card.cardId.toLowerCase().includes(normalizedQuery) ||
-      card.set.toLowerCase().includes(normalizedQuery) ||
-      card.cardType.toLowerCase().includes(normalizedQuery)
-    ) {
-      results.push(card);
-    }
+  // If it looks like a card ID, try direct lookup first
+  const idPattern = /^[A-Za-z]+-\d+/;
+  if (idPattern.test(query.trim())) {
+    const byId = await getCardById(query.trim());
+    if (byId) return [byId];
+  }
+  
+  // Otherwise search by name
+  const { cards } = await searchCardsByName(query.trim());
+  
+  // Cache results
+  cards.forEach(card => {
+    cardCache.set(card.cardId.toLowerCase(), card);
+    nameCache.set(card.cardName.toLowerCase(), card);
+    nameCache.set(card.displayName.toLowerCase(), card);
   });
   
-  return results;
+  return cards;
 }
 
 /**
- * Get all unique sets in the database
+ * Get all cached cards
  */
-export function getAllSets(): string[] {
+export function getCachedCards(): Card[] {
+  return Array.from(cardCache.values());
+}
+
+/**
+ * Get all unique sets from cached cards
+ */
+export function getCachedSets(): string[] {
   const sets = new Set<string>();
   cardCache.forEach(card => sets.add(card.set));
   return Array.from(sets).sort();
 }
 
 /**
- * Get all cards in the database
+ * Get cache size
  */
-export function getAllCards(): Card[] {
-  return Array.from(cardCache.values());
-}
-
-/**
- * Add a card to the database (for importing new card data)
- */
-export function addCardToDatabase(card: Card): void {
-  cardCache.set(card.cardId.toLowerCase(), card);
-  nameCache.set(card.cardName.toLowerCase(), card);
-  
-  // Persist to localStorage
-  const allCards = Array.from(cardCache.values());
-  localStorage.setItem('riftbound_card_database', JSON.stringify(allCards));
-}
-
-/**
- * Import multiple cards into the database
- */
-export function importCards(cards: Card[]): void {
-  cards.forEach(card => {
-    cardCache.set(card.cardId.toLowerCase(), card);
-    nameCache.set(card.cardName.toLowerCase(), card);
-  });
-  
-  const allCards = Array.from(cardCache.values());
-  localStorage.setItem('riftbound_card_database', JSON.stringify(allCards));
-}
-
-/**
- * Get total card count in database
- */
-export function getDatabaseSize(): number {
+export function getCacheSize(): number {
   return cardCache.size;
 }
 
 /**
- * Validate a card ID format
- * Accepts formats like: CR-001, RB-001, XYZ-123, etc.
+ * Clear the cache
+ */
+export function clearCache(): void {
+  cardCache.clear();
+  nameCache.clear();
+}
+
+/**
+ * Pre-cache a card (add to cache without API call)
+ */
+export function cacheCard(card: Card): void {
+  cardCache.set(card.cardId.toLowerCase(), card);
+  nameCache.set(card.cardName.toLowerCase(), card);
+  nameCache.set(card.displayName.toLowerCase(), card);
+}
+
+/**
+ * Check if a card ID format is valid
+ * Accepts formats like: VEN-131, OGN-039-298, ven-131, etc.
  */
 export function isValidCardIdFormat(cardId: string): boolean {
-  const pattern = /^[A-Za-z]+-\d+$/;
+  // Format: SET-NUMBER or SET-NUMBER-NUMBER
+  const pattern = /^[A-Za-z]+-\d+(-\d+)?$/;
   return pattern.test(cardId.trim());
 }

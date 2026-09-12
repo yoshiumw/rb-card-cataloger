@@ -1,26 +1,95 @@
 // Core type definitions for the Riftbound Card Cataloger
 
+// ============ API Response Types ============
+
+export interface RiftboundApiResponse {
+  items: RiftboundCard[];
+  total: number;
+  page: number;
+  size: number;
+  pages: number;
+}
+
+export interface RiftboundCard {
+  id: string;
+  name: string;
+  riftbound_id: string;
+  tcgplayer_id?: string;
+  collector_number: number;
+  attributes: {
+    energy: number | null;
+    might: number | null;
+    power: number | null;
+  };
+  classification: {
+    type: string;
+    supertype: string | null;
+    rarity: string;
+    domain: string[];
+  };
+  text: {
+    rich: string;
+    plain: string;
+    flavour: string | null;
+  };
+  set: {
+    set_id: string;
+    label: string;
+  };
+  media: {
+    image_url: string;
+    artist: string;
+    accessibility_text: string;
+  };
+  tags: string[];
+  orientation: string;
+  metadata: {
+    clean_name: string;
+    updated_on: string;
+    alternate_art: boolean;
+    overnumbered: boolean;
+    signature: boolean;
+  };
+  new: boolean;
+}
+
+// ============ Application Types ============
+
 export interface Card {
-  cardId: string;
-  cardName: string;
-  set: string;
-  cardNumber: string;
-  cardType: string;
-  imageUrl?: string;
-  rarity?: string;
-  metadata?: Record<string, unknown>;
+  cardId: string;           // riftbound_id (e.g., "ven-131" or "ogn-039-298")
+  cardName: string;         // display name (e.g., "Kai'Sa - Survivor")
+  displayName: string;      // decklist-friendly name (e.g., "Kai'Sa, Survivor")
+  set: string;              // set label (e.g., "Origins")
+  setId: string;            // set code (e.g., "OGN")
+  cardNumber: string;       // collector number
+  cardType: string;         // type (e.g., "Unit", "Spell")
+  supertype: string | null; // supertype (e.g., "Champion")
+  imageUrl: string;
+  rarity: string;
+  domain: string[];
+  energy: number | null;
+  might: number | null;
+  power: number | null;
+  cardText: string;
+  artist: string;
+  tags: string[];
+  alternateArt: boolean;
 }
 
 export interface CollectionEntry {
   cardId: string;
   cardName: string;
+  displayName: string;
   set: string;
+  setId: string;
   cardNumber: string;
   cardType: string;
-  imageUrl?: string;
+  supertype: string | null;
+  imageUrl: string;
+  rarity: string;
   quantity: number;
-  addedAt: Date;
-  updatedAt: Date;
+  addedAt: string;
+  updatedAt: string;
 }
 
 export interface DeckCardEntry {
@@ -50,8 +119,8 @@ export interface Deck {
   name: string;
   rawDecklist: string;
   parsedDecklist: ParsedDecklist;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface DeckSection {

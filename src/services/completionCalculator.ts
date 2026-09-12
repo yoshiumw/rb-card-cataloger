@@ -1,11 +1,13 @@
 import { ParsedDecklist, CollectionEntry, DeckCompletion, SectionCompletion, CompletionResult, MissingCardSummary, Deck, DeckSectionKey } from '../types';
-import { getCardByName } from './cardLookupService';
+import { getCachedCards } from './cardLookupService';
 
 /**
  * Completion Calculator Service
  * 
  * Compares a decklist against a user's collection to determine
  * what cards are missing and how complete the deck is.
+ * 
+ * Uses cached card data for name matching (cards are cached when looked up via API).
  */
 
 const SECTION_NAMES: Record<DeckSectionKey, string> = {
@@ -18,27 +20,73 @@ const SECTION_NAMES: Record<DeckSectionKey, string> = {
 };
 
 /**
+ * Normalize a card name for matching.
+ * Handles both formats:
+ *   "Kai'Sa, Survivor" (decklist) → "kaisa survivor"
+ *   "Kai'Sa - Survivor" (API) → "kaisa survivor"
+ */
+function normalizeName(name: string): string {
+  return name.toLowerCase().replace(/[,']/g, '').replace(/\s*-\s*/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Build a name-based index from the collection
+ */
+function buildCollectionNameIndex(collection: Map<string, CollectionEntry>): Map<string, CollectionEntry> {
+  const index = new Map<string, CollectionEntry>();
+  collection.forEach(entry => {
+    // Index by both display name and card name
+    index.set(normalizeName(entry.displayName), entry);
+    index.set(normalizeName(entry.cardName), entry);
+    index.set(entry.cardName.toLowerCase(), entry);
+    index.set(entry.displayName.toLowerCase(), entry);
+  });
+  return index;
+}
+
+/**
+ * Build a name-based index from cached API cards
+ */
+function buildCardNameIndex(): Map<string, string> {
+  const index = new Map<string, string>();
+  getCachedCards().forEach(card => {
+    index.set(normalizeName(card.displayName), card.cardId);
+    index.set(normalizeName(card.cardName), card.cardId);
+    index.set(card.cardName.toLowerCase(), card.cardId);
+    index.set(card.displayName.toLowerCase(), card.cardId);
+  });
+  return index;
+}
+
+/**
  * Calculate completion for a single section
  */
 function calculateSectionCompletion(
   sectionKey: DeckSectionKey,
   cards: { cardName: string; quantity: number }[],
-  collection: Map<string, CollectionEntry>,
-  collectionByName: Map<string, CollectionEntry>
+  collectionByName: Map<string, CollectionEntry>,
+  cardNameIndex: Map<string, string>
 ): SectionCompletion {
   const completionCards: CompletionResult[] = [];
   let totalRequired = 0;
   let totalOwned = 0;
 
   for (const deckCard of cards) {
-    // Try to find the card in the collection by name
-    const collectionEntry = collectionByName.get(deckCard.cardName.toLowerCase());
+    // Try to find the card in the collection by normalized name
+    const normalizedDeckName = normalizeName(deckCard.cardName);
+    const collectionEntry = 
+      collectionByName.get(normalizedDeckName) ||
+      collectionByName.get(deckCard.cardName.toLowerCase());
+    
     const owned = collectionEntry ? collectionEntry.quantity : 0;
     const missing = Math.max(0, deckCard.quantity - owned);
     const actualOwned = Math.min(owned, deckCard.quantity);
 
-    // Try to get card ID from the card database
-    const cardFromDb = getCardByName(deckCard.cardName);
+    // Try to get card ID from cache
+    const cardId = 
+      cardNameIndex.get(normalizedDeckName) ||
+      cardNameIndex.get(deckCard.cardName.toLowerCase()) ||
+      collectionEntry?.cardId;
 
     totalRequired += deckCard.quantity;
     totalOwned += actualOwned;
@@ -49,7 +97,7 @@ function calculateSectionCompletion(
 
     completionCards.push({
       cardName: deckCard.cardName,
-      cardId: cardFromDb?.cardId,
+      cardId,
       required: deckCard.quantity,
       owned,
       missing,
@@ -78,11 +126,8 @@ export function calculateDeckCompletion(
   parsedDecklist: ParsedDecklist,
   collection: Map<string, CollectionEntry>
 ): DeckCompletion {
-  // Build a name-based index for the collection
-  const collectionByName = new Map<string, CollectionEntry>();
-  collection.forEach(entry => {
-    collectionByName.set(entry.cardName.toLowerCase(), entry);
-  });
+  const collectionByName = buildCollectionNameIndex(collection);
+  const cardNameIndex = buildCardNameIndex();
 
   const sections: SectionCompletion[] = [];
   const sectionKeys: DeckSectionKey[] = ['legend', 'champion', 'mainDeck', 'battlefields', 'runePool', 'sideboard'];
@@ -90,7 +135,7 @@ export function calculateDeckCompletion(
   for (const key of sectionKeys) {
     const sectionCards = parsedDecklist[key];
     if (sectionCards.length > 0) {
-      const completion = calculateSectionCompletion(key, sectionCards, collection, collectionByName);
+      const completion = calculateSectionCompletion(key, sectionCards, collectionByName, cardNameIndex);
       sections.push(completion);
     }
   }
@@ -121,11 +166,8 @@ export function calculateMissingCards(
   decks: Deck[],
   collection: Map<string, CollectionEntry>
 ): MissingCardSummary[] {
-  // Build collection name index
-  const collectionByName = new Map<string, CollectionEntry>();
-  collection.forEach(entry => {
-    collectionByName.set(entry.cardName.toLowerCase(), entry);
-  });
+  const collectionByName = buildCollectionNameIndex(collection);
+  const cardNameIndex = buildCardNameIndex();
 
   // Aggregate required cards across all decks
   const cardRequirements = new Map<string, {
@@ -141,13 +183,13 @@ export function calculateMissingCards(
 
     for (const key of sectionKeys) {
       for (const card of parsed[key]) {
-        const normalizedName = card.cardName.toLowerCase();
-        const cardFromDb = getCardByName(card.cardName);
+        const normalizedName = normalizeName(card.cardName);
+        const cardId = cardNameIndex.get(normalizedName) || cardNameIndex.get(card.cardName.toLowerCase());
 
         if (!cardRequirements.has(normalizedName)) {
           cardRequirements.set(normalizedName, {
             cardName: card.cardName,
-            cardId: cardFromDb?.cardId,
+            cardId,
             totalRequired: 0,
             requiredBy: [],
           });
@@ -168,7 +210,10 @@ export function calculateMissingCards(
   const missingCards: MissingCardSummary[] = [];
 
   cardRequirements.forEach(req => {
-    const collectionEntry = collectionByName.get(req.cardName.toLowerCase());
+    const normalizedName = normalizeName(req.cardName);
+    const collectionEntry = 
+      collectionByName.get(normalizedName) ||
+      collectionByName.get(req.cardName.toLowerCase());
     const owned = collectionEntry ? collectionEntry.quantity : 0;
     const stillNeeded = Math.max(0, req.totalRequired - owned);
 

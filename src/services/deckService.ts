@@ -6,10 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
  * Deck Service
  * 
  * Manages saved decklists.
- * In production, this would use Firestore:
- *   users/{userId}/decks/{deckId}
- * 
- * Currently uses localStorage for demo purposes.
+ * Uses localStorage for persistence.
  */
 
 const DECKS_KEY = 'riftbound_decks';
@@ -17,13 +14,7 @@ const DECKS_KEY = 'riftbound_decks';
 function getDecksFromStorage(): Deck[] {
   const stored = localStorage.getItem(DECKS_KEY);
   if (!stored) return [];
-  
-  const decks: Deck[] = JSON.parse(stored);
-  return decks.map(d => ({
-    ...d,
-    createdAt: new Date(d.createdAt),
-    updatedAt: new Date(d.updatedAt),
-  }));
+  return JSON.parse(stored);
 }
 
 function saveDecksToStorage(decks: Deck[]): void {
@@ -43,7 +34,6 @@ export function createDeck(name: string, rawDecklist: string): { success: boolea
 
   const parsedDecklist = parseDecklist(rawDecklist);
   
-  // Check if there are any cards at all
   const totalCards = 
     parsedDecklist.legend.length +
     parsedDecklist.champion.length +
@@ -56,13 +46,14 @@ export function createDeck(name: string, rawDecklist: string): { success: boolea
     return { success: false, error: 'Could not parse any cards from the decklist. Please check the format.' };
   }
 
+  const now = new Date().toISOString();
   const deck: Deck = {
     id: uuidv4(),
     name: name.trim(),
     rawDecklist,
     parsedDecklist,
-    createdAt: new Date(),
-    updatedAt: new Date(),
+    createdAt: now,
+    updatedAt: now,
   };
 
   const decks = getDecksFromStorage();
@@ -94,7 +85,7 @@ export function updateDeck(deckId: string, name: string, rawDecklist: string): {
     name: name.trim(),
     rawDecklist,
     parsedDecklist,
-    updatedAt: new Date(),
+    updatedAt: new Date().toISOString(),
   };
 
   saveDecksToStorage(decks);

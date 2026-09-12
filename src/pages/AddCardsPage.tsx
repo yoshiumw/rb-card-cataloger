@@ -18,22 +18,35 @@ export default function AddCardsPage() {
   const [lastResult, setLastResult] = useState<AddResult | null>(null);
   const [history, setHistory] = useState<AddResult[]>([]);
   const [preview, setPreview] = useState<Card | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const previewTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
 
   // Focus input on mount
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
-  // Preview card as user types
+  // Preview card as user types (debounced)
   useEffect(() => {
+    if (previewTimeoutRef.current) clearTimeout(previewTimeoutRef.current);
+    
     const trimmed = inputValue.trim();
-    if (trimmed.length >= 3) {
-      const card = getCardById(trimmed);
-      setPreview(card);
+    if (trimmed.length >= 4 && isValidCardIdFormat(trimmed)) {
+      setPreviewLoading(true);
+      previewTimeoutRef.current = setTimeout(async () => {
+        const card = await getCardById(trimmed);
+        setPreview(card);
+        setPreviewLoading(false);
+      }, 300);
     } else {
       setPreview(null);
+      setPreviewLoading(false);
     }
+
+    return () => {
+      if (previewTimeoutRef.current) clearTimeout(previewTimeoutRef.current);
+    };
   }, [inputValue]);
 
   const handleAdd = async () => {
@@ -41,15 +54,11 @@ export default function AddCardsPage() {
     if (!cardId) return;
 
     setLoading(true);
-    
-    // Simulate a small delay for UX feedback
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    const result = addCardToCollection(cardId);
+    const result = await addCardToCollection(cardId);
     
     const addResult: AddResult = {
       cardId,
-      cardName: result.entry?.cardName || cardId,
+      cardName: result.entry?.cardName || result.entry?.displayName || cardId,
       success: result.success,
       message: result.success 
         ? `Added ${result.entry!.cardName} (×${result.entry!.quantity})` 
@@ -81,7 +90,7 @@ export default function AddCardsPage() {
       {/* Header */}
       <div>
         <h1 className="text-2xl md:text-3xl font-bold text-white">Add Cards</h1>
-        <p className="text-gray-400 mt-1">Enter card IDs to add them to your collection. Press Enter to quickly add multiple cards.</p>
+        <p className="text-gray-400 mt-1">Enter card IDs (e.g., <code className="text-purple-300">OGN-039</code>) to add them to your collection. Press Enter for rapid entry.</p>
       </div>
 
       {/* Main Input Area */}
@@ -99,7 +108,7 @@ export default function AddCardsPage() {
                   value={inputValue}
                   onChange={e => setInputValue(e.target.value.toUpperCase())}
                   onKeyDown={handleKeyDown}
-                  placeholder="e.g., CR-001"
+                  placeholder="e.g., OGN-039 or VEN-131"
                   disabled={loading}
                   className={`
                     w-full pl-10 pr-10 py-3 bg-gray-700 border rounded-lg text-white text-lg 
@@ -112,7 +121,10 @@ export default function AddCardsPage() {
                   autoCapitalize="off"
                   spellCheck={false}
                 />
-                {formatValid === true && (
+                {previewLoading && (
+                  <Loader2 size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 animate-spin" />
+                )}
+                {!previewLoading && formatValid === true && (
                   <Check size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-green-400" />
                 )}
                 {formatValid === false && inputValue.trim() && (
@@ -129,19 +141,35 @@ export default function AddCardsPage() {
               </button>
             </div>
             {formatValid === false && inputValue.trim() && (
-              <p className="mt-2 text-sm text-red-400">Invalid format. Use format like CR-001 or RB-003.</p>
+              <p className="mt-2 text-sm text-red-400">Invalid format. Use format like OGN-039, VEN-131, or OGN-039-298.</p>
             )}
           </div>
 
           {/* Card Preview */}
           {preview && (
             <div className="p-4 rounded-lg bg-gray-700/50 border border-gray-600 flex items-center gap-4">
-              <div className="w-12 h-16 rounded bg-gradient-to-br from-purple-600/30 to-pink-600/30 border border-purple-500/30 flex items-center justify-center">
-                <span className="text-xs font-bold text-purple-300">{preview.cardNumber}</span>
+              <div className="w-14 h-20 rounded-lg overflow-hidden bg-gray-600 flex-shrink-0">
+                {preview.imageUrl ? (
+                  <img src={preview.imageUrl} alt={preview.cardName} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <span className="text-xs font-bold text-gray-400">{preview.cardNumber}</span>
+                  </div>
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-medium text-white truncate">{preview.cardName}</p>
-                <p className="text-sm text-gray-400">{preview.set} • {preview.cardType} • {preview.rarity}</p>
+                <p className="text-sm text-gray-400">{preview.set} • {preview.cardType}{preview.supertype ? ` (${preview.supertype})` : ''}</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-purple-600/20 text-purple-300 border border-purple-500/30">
+                    {preview.rarity}
+                  </span>
+                  {preview.domain.length > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-blue-600/20 text-blue-300 border border-blue-500/30">
+                      {preview.domain.join(', ')}
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="text-right">
                 <span className="text-xs px-2 py-1 rounded-full bg-green-600/20 text-green-300 border border-green-500/30">
@@ -170,7 +198,7 @@ export default function AddCardsPage() {
                 </p>
                 {lastResult.entry && (
                   <p className="text-xs text-gray-400 mt-0.5">
-                    {lastResult.entry.set} • {lastResult.entry.cardType}
+                    {lastResult.entry.set} • {lastResult.entry.cardType} • {lastResult.entry.rarity}
                   </p>
                 )}
               </div>
@@ -184,9 +212,10 @@ export default function AddCardsPage() {
         <h3 className="text-sm font-medium text-gray-300 mb-2">💡 Quick Tips</h3>
         <ul className="text-sm text-gray-400 space-y-1">
           <li>• Press <kbd className="px-1.5 py-0.5 bg-gray-700 rounded text-xs text-gray-300">Enter</kbd> to add and immediately enter the next card</li>
-          <li>• Card IDs are case-insensitive (CR-001 = cr-001)</li>
+          <li>• Card IDs are case-insensitive (OGN-039 = ogn-039)</li>
           <li>• Adding the same card increases its quantity</li>
-          <li>• Core Release cards start with CR-, Riftborn cards with RB-</li>
+          <li>• IDs follow the format: <code className="text-purple-300">SET-NUMBER</code> (e.g., OGN-039, VEN-131)</li>
+          <li>• Card data is fetched live from the Riftbound database</li>
         </ul>
       </div>
 

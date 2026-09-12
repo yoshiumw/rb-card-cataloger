@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Edit3, Trash2, Check, AlertTriangle, X, Swords } from 'lucide-react';
+import { ArrowLeft, Edit3, Trash2, Check, AlertTriangle, X, Swords, Loader2, RefreshCw } from 'lucide-react';
 import { getDeck, deleteDeck, updateDeck } from '../services/deckService';
 import { getCollection } from '../services/collectionService';
 import { calculateDeckCompletion } from '../services/completionCalculator';
 import { validateDecklist } from '../services/decklistParser';
-import { Deck, ParsedDecklist, SectionCompletion } from '../types';
+import { getCardByName } from '../services/cardLookupService';
+import { Deck, ParsedDecklist, SectionCompletion, DeckSectionKey } from '../types';
 
 export default function DeckDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -14,6 +15,8 @@ export default function DeckDetailPage() {
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
   const [editText, setEditText] = useState('');
+  const [resolving, setResolving] = useState(false);
+  const [resolved, setResolved] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -27,6 +30,35 @@ export default function DeckDetailPage() {
       }
     }
   }, [id, navigate]);
+
+  // Auto-resolve card names when viewing a deck
+  useEffect(() => {
+    if (deck && !resolved) {
+      resolveCards(deck.parsedDecklist);
+    }
+  }, [deck]);
+
+  const resolveCards = async (parsed: ParsedDecklist) => {
+    setResolving(true);
+    const sectionKeys: DeckSectionKey[] = ['legend', 'champion', 'mainDeck', 'battlefields', 'runePool', 'sideboard'];
+    
+    const allCardNames: string[] = [];
+    for (const key of sectionKeys) {
+      for (const card of parsed[key]) {
+        allCardNames.push(card.cardName);
+      }
+    }
+
+    // Resolve in batches to avoid too many concurrent requests
+    const batchSize = 5;
+    for (let i = 0; i < allCardNames.length; i += batchSize) {
+      const batch = allCardNames.slice(i, i + batchSize);
+      await Promise.all(batch.map(name => getCardByName(name)));
+    }
+
+    setResolving(false);
+    setResolved(true);
+  };
 
   if (!deck) return null;
 
@@ -46,6 +78,7 @@ export default function DeckDetailPage() {
     if (result.success && result.deck) {
       setDeck(result.deck);
       setEditing(false);
+      setResolved(false);
     }
   };
 
@@ -60,9 +93,18 @@ export default function DeckDetailPage() {
           <h1 className="text-2xl md:text-3xl font-bold text-white">{deck.name}</h1>
           <p className="text-gray-400 text-sm mt-0.5">
             Last updated: {new Date(deck.updatedAt).toLocaleDateString()}
+            {deck.parsedDecklist.errors.length > 0 && ` • ${deck.parsedDecklist.errors.length} parse error(s)`}
           </p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={() => { setResolved(false); resolveCards(deck.parsedDecklist); }}
+            disabled={resolving}
+            className="p-2 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white transition-colors"
+            title="Re-resolve card names from API"
+          >
+            {resolving ? <Loader2 size={20} className="animate-spin" /> : <RefreshCw size={20} />}
+          </button>
           <button
             onClick={() => setEditing(!editing)}
             className="p-2 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white transition-colors"
@@ -79,6 +121,14 @@ export default function DeckDetailPage() {
           </button>
         </div>
       </div>
+
+      {/* Resolving indicator */}
+      {resolving && (
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-blue-600/10 border border-blue-500/30 text-blue-300 text-sm">
+          <Loader2 size={16} className="animate-spin" />
+          Resolving card names from API...
+        </div>
+      )}
 
       {/* Edit mode */}
       {editing && (
@@ -115,6 +165,18 @@ export default function DeckDetailPage() {
             <p key={i} className="text-sm text-amber-300 flex items-start gap-2">
               <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
               {w}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {/* Parse Errors */}
+      {deck.parsedDecklist.errors.length > 0 && !editing && (
+        <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30">
+          <p className="text-sm font-medium text-red-300 mb-2">Parse Errors:</p>
+          {deck.parsedDecklist.errors.map((e, i) => (
+            <p key={i} className="text-xs text-red-300 mb-1">
+              Line {e.lineNumber}: "{e.line}" — {e.message}
             </p>
           ))}
         </div>
@@ -242,7 +304,12 @@ function SectionDetail({ section }: { section: SectionCompletion }) {
             <tbody>
               {section.cards.map((card, i) => (
                 <tr key={i} className="border-b border-gray-700/50 last:border-0">
-                  <td className="px-4 py-2.5 text-sm text-white">{card.cardName}</td>
+                  <td className="px-4 py-2.5 text-sm text-white">
+                    {card.cardName}
+                    {card.cardId && (
+                      <span className="ml-2 text-xs text-gray-500 font-mono">{card.cardId}</span>
+                    )}
+                  </td>
                   <td className="px-3 py-2.5 text-sm text-center text-gray-300">{card.required}</td>
                   <td className="px-3 py-2.5 text-sm text-center text-gray-300">{card.owned}</td>
                   <td className="px-3 py-2.5 text-sm text-center">

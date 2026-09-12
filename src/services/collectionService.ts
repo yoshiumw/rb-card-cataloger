@@ -1,14 +1,12 @@
 import { CollectionEntry, Card } from '../types';
-import { getCardById } from './cardLookupService';
+import { getCardById, cacheCard } from './cardLookupService';
 
 /**
  * Collection Service
  * 
  * Manages the user's card collection.
- * In production, this would use Firestore:
- *   users/{userId}/collection/{cardId}
- * 
- * Currently uses localStorage for demo purposes.
+ * Uses localStorage for persistence.
+ * Card data is fetched from the riftcodex.com API.
  */
 
 const COLLECTION_KEY = 'riftbound_collection';
@@ -18,7 +16,7 @@ function getCollectionFromStorage(): Map<string, CollectionEntry> {
   if (!stored) return new Map();
   
   const entries: CollectionEntry[] = JSON.parse(stored);
-  return new Map(entries.map(e => [e.cardId, { ...e, addedAt: new Date(e.addedAt), updatedAt: new Date(e.updatedAt) }]));
+  return new Map(entries.map(e => [e.cardId, e]));
 }
 
 function saveCollectionToStorage(collection: Map<string, CollectionEntry>): void {
@@ -29,19 +27,23 @@ function saveCollectionToStorage(collection: Map<string, CollectionEntry>): void
 /**
  * Add a card to the collection by card ID
  * If the card already exists, increases quantity
+ * Returns async result since it needs to fetch card data from API
  */
-export function addCardToCollection(cardId: string): { success: boolean; entry?: CollectionEntry; error?: string } {
-  const card = getCardById(cardId);
+export async function addCardToCollection(cardId: string): Promise<{ success: boolean; entry?: CollectionEntry; error?: string }> {
+  const card = await getCardById(cardId);
   if (!card) {
     return { success: false, error: `Card not found: "${cardId}". Please check the card ID and try again.` };
   }
+
+  // Cache the card for future lookups
+  cacheCard(card);
 
   const collection = getCollectionFromStorage();
   const existing = collection.get(card.cardId);
 
   if (existing) {
     existing.quantity += 1;
-    existing.updatedAt = new Date();
+    existing.updatedAt = new Date().toISOString();
     collection.set(card.cardId, existing);
     saveCollectionToStorage(collection);
     return { success: true, entry: existing };
@@ -49,13 +51,17 @@ export function addCardToCollection(cardId: string): { success: boolean; entry?:
     const newEntry: CollectionEntry = {
       cardId: card.cardId,
       cardName: card.cardName,
+      displayName: card.displayName,
       set: card.set,
+      setId: card.setId,
       cardNumber: card.cardNumber,
       cardType: card.cardType,
+      supertype: card.supertype,
       imageUrl: card.imageUrl,
+      rarity: card.rarity,
       quantity: 1,
-      addedAt: new Date(),
-      updatedAt: new Date(),
+      addedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
     collection.set(card.cardId, newEntry);
     saveCollectionToStorage(collection);
@@ -67,12 +73,13 @@ export function addCardToCollection(cardId: string): { success: boolean; entry?:
  * Add a card to the collection directly (from card data)
  */
 export function addCardDirectly(card: Card, quantity: number = 1): { success: boolean; entry?: CollectionEntry } {
+  cacheCard(card);
   const collection = getCollectionFromStorage();
   const existing = collection.get(card.cardId);
 
   if (existing) {
     existing.quantity += quantity;
-    existing.updatedAt = new Date();
+    existing.updatedAt = new Date().toISOString();
     collection.set(card.cardId, existing);
     saveCollectionToStorage(collection);
     return { success: true, entry: existing };
@@ -80,13 +87,17 @@ export function addCardDirectly(card: Card, quantity: number = 1): { success: bo
     const newEntry: CollectionEntry = {
       cardId: card.cardId,
       cardName: card.cardName,
+      displayName: card.displayName,
       set: card.set,
+      setId: card.setId,
       cardNumber: card.cardNumber,
       cardType: card.cardType,
+      supertype: card.supertype,
       imageUrl: card.imageUrl,
+      rarity: card.rarity,
       quantity,
-      addedAt: new Date(),
-      updatedAt: new Date(),
+      addedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
     collection.set(card.cardId, newEntry);
     saveCollectionToStorage(collection);
@@ -126,7 +137,7 @@ export function updateCardQuantity(cardId: string, quantity: number): { success:
     collection.delete(cardId);
   } else {
     existing.quantity = quantity;
-    existing.updatedAt = new Date();
+    existing.updatedAt = new Date().toISOString();
     collection.set(cardId, existing);
   }
   
@@ -149,7 +160,7 @@ export function getCollectionAsArray(): CollectionEntry[] {
 }
 
 /**
- * Search collection
+ * Search collection (synchronous, searches local data)
  */
 export function searchCollection(query: string): CollectionEntry[] {
   const collection = getCollectionAsArray();
@@ -159,6 +170,7 @@ export function searchCollection(query: string): CollectionEntry[] {
   
   return collection.filter(entry => 
     entry.cardName.toLowerCase().includes(normalizedQuery) ||
+    entry.displayName.toLowerCase().includes(normalizedQuery) ||
     entry.cardId.toLowerCase().includes(normalizedQuery) ||
     entry.set.toLowerCase().includes(normalizedQuery) ||
     entry.cardType.toLowerCase().includes(normalizedQuery)
@@ -182,4 +194,13 @@ export function getRecentlyAdded(limit: number = 10): CollectionEntry[] {
   return collection
     .sort((a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime())
     .slice(0, limit);
+}
+
+/**
+ * Get all unique sets from collection
+ */
+export function getCollectionSets(): string[] {
+  const sets = new Set<string>();
+  getCollectionAsArray().forEach(entry => sets.add(entry.set));
+  return Array.from(sets).sort();
 }

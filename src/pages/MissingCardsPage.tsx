@@ -1,24 +1,56 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { AlertTriangle, Search, Package } from 'lucide-react';
+import { AlertTriangle, Search, Package, Loader2 } from 'lucide-react';
 import { getDecks } from '../services/deckService';
-import { getCollection, getCollectionAsArray } from '../services/collectionService';
+import { getCollection } from '../services/collectionService';
 import { calculateMissingCards } from '../services/completionCalculator';
-import { MissingCardSummary } from '../types';
+import { getCardByName } from '../services/cardLookupService';
+import { MissingCardSummary, DeckSectionKey } from '../types';
 
 export default function MissingCardsPage() {
   const [missingCards, setMissingCards] = useState<MissingCardSummary[]>([]);
   const [search, setSearch] = useState('');
   const [deckFilter, setDeckFilter] = useState('');
-
-  useEffect(() => {
-    const decks = getDecks();
-    const collection = getCollection();
-    const missing = calculateMissingCards(decks, collection);
-    setMissingCards(missing);
-  }, []);
+  const [resolving, setResolving] = useState(false);
 
   const decks = useMemo(() => getDecks(), []);
   const deckNames = useMemo(() => decks.map(d => d.name), [decks]);
+
+  useEffect(() => {
+    const resolveAndCalculate = async () => {
+      if (decks.length === 0) return;
+      
+      setResolving(true);
+      
+      // Resolve all card names from API to populate cache
+      const allCardNames = new Set<string>();
+      const sectionKeys: DeckSectionKey[] = ['legend', 'champion', 'mainDeck', 'battlefields', 'runePool', 'sideboard'];
+      
+      for (const deck of decks) {
+        for (const key of sectionKeys) {
+          for (const card of deck.parsedDecklist[key]) {
+            allCardNames.add(card.cardName);
+          }
+        }
+      }
+
+      // Resolve in batches
+      const names = Array.from(allCardNames);
+      const batchSize = 5;
+      for (let i = 0; i < names.length; i += batchSize) {
+        const batch = names.slice(i, i + batchSize);
+        await Promise.all(batch.map(name => getCardByName(name)));
+      }
+
+      setResolving(false);
+
+      // Now calculate missing cards with full cache
+      const collection = getCollection();
+      const missing = calculateMissingCards(decks, collection);
+      setMissingCards(missing);
+    };
+
+    resolveAndCalculate();
+  }, [decks]);
 
   const filtered = useMemo(() => {
     let result = missingCards;
@@ -44,7 +76,7 @@ export default function MissingCardsPage() {
         <h1 className="text-2xl md:text-3xl font-bold text-white">Missing Cards</h1>
         <p className="text-gray-400 mt-1">
           Cards you need to complete your decks.
-          {missingCards.length > 0 && (
+          {!resolving && missingCards.length > 0 && (
             <span className="text-red-400 ml-1">
               {totalStillNeeded} cards still needed across {missingCards.length} unique cards.
             </span>
@@ -52,34 +84,44 @@ export default function MissingCardsPage() {
         </p>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search missing cards..."
-            className="w-full pl-10 pr-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
-          />
+      {/* Resolving indicator */}
+      {resolving && (
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-blue-600/10 border border-blue-500/30 text-blue-300 text-sm">
+          <Loader2 size={16} className="animate-spin" />
+          Resolving card names from API...
         </div>
-        {deckNames.length > 0 && (
-          <select
-            value={deckFilter}
-            onChange={e => setDeckFilter(e.target.value)}
-            className="px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-          >
-            <option value="">All Decks</option>
-            {deckNames.map(name => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
-        )}
-      </div>
+      )}
+
+      {/* Filters */}
+      {!resolving && (
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search missing cards..."
+              className="w-full pl-10 pr-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
+            />
+          </div>
+          {deckNames.length > 0 && (
+            <select
+              value={deckFilter}
+              onChange={e => setDeckFilter(e.target.value)}
+              className="px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+            >
+              <option value="">All Decks</option>
+              {deckNames.map(name => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          )}
+        </div>
+      )}
 
       {/* Missing Cards List */}
-      {missingCards.length === 0 ? (
+      {!resolving && missingCards.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
           <Package size={48} className="mx-auto mb-4 opacity-50" />
           <p className="text-lg font-medium">
@@ -89,11 +131,11 @@ export default function MissingCardsPage() {
             {decks.length === 0 ? 'Import a decklist to see what cards you need.' : '🎉 You have everything you need!'}
           </p>
         </div>
-      ) : filtered.length === 0 ? (
+      ) : !resolving && filtered.length === 0 ? (
         <div className="text-center py-12 text-gray-400">
           <p>No cards match your filters.</p>
         </div>
-      ) : (
+      ) : !resolving && (
         <div className="space-y-3">
           {filtered.map(card => (
             <MissingCardItem key={card.cardName} card={card} />
@@ -109,8 +151,8 @@ function MissingCardItem({ card }: { card: MissingCardSummary }) {
     <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 hover:border-gray-600 transition-colors">
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <h3 className="font-medium text-white truncate">{card.cardName}</h3>
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <h3 className="font-medium text-white">{card.cardName}</h3>
             {card.cardId && (
               <span className="text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-400 font-mono">
                 {card.cardId}
