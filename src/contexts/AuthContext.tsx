@@ -5,7 +5,8 @@ import {
   signOut, 
   onAuthStateChanged,
   GoogleAuthProvider,
-  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   User as FirebaseUser
 } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
@@ -48,29 +49,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Firebase mode: listen to auth state
-    const unsubscribe = onAuthStateChanged(auth!, async (firebaseUser: FirebaseUser | null) => {
-      if (firebaseUser) {
-        // User is signed in
-        const userDocRef = doc(db!, 'users', firebaseUser.uid);
-        const userDoc = await getDoc(userDocRef);
-        
-        const userData: User = {
-          uid: firebaseUser.uid,
-          email: firebaseUser.email,
-          displayName: firebaseUser.displayName || userDoc.data()?.displayName || firebaseUser.email?.split('@')[0] || 'Player',
-          photoURL: firebaseUser.photoURL,
-        };
-        
-        setUser(userData);
-      } else {
-        // User is signed out
-        setUser(null);
+    // Firebase mode: handle redirect result and listen to auth state
+    const initAuth = async () => {
+      // Check if we're returning from a redirect sign-in
+      try {
+        const result = await getRedirectResult(auth!);
+        if (result) {
+          // User just completed Google sign-in via redirect
+          console.log('Google sign-in successful via redirect');
+        }
+      } catch (error) {
+        console.error('Error getting redirect result:', error);
       }
-      setLoading(false);
+
+      // Listen to auth state changes
+      const unsubscribe = onAuthStateChanged(auth!, async (firebaseUser: FirebaseUser | null) => {
+        if (firebaseUser) {
+          // User is signed in
+          const userDocRef = doc(db!, 'users', firebaseUser.uid);
+          const userDoc = await getDoc(userDocRef);
+        
+          const userData: User = {
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            displayName: firebaseUser.displayName || userDoc.data()?.displayName || firebaseUser.email?.split('@')[0] || 'Player',
+            photoURL: firebaseUser.photoURL,
+          };
+        
+          setUser(userData);
+        } else {
+          // User is signed out
+          setUser(null);
+        }
+        setLoading(false);
+      });
+
+      return unsubscribe;
+    };
+
+    let cleanup: (() => void) | undefined;
+    initAuth().then(unsubscribe => {
+      cleanup = unsubscribe;
     });
 
-    return () => unsubscribe();
+    return () => {
+      if (cleanup) cleanup();
+    };
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
@@ -169,10 +193,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Firebase mode
+    // Firebase mode - use redirect instead of popup to avoid popup blockers
     try {
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth!, provider);
+      await signInWithRedirect(auth!, provider);
     } catch (err: any) {
       setError('Google sign-in failed. Please try again.');
     }
