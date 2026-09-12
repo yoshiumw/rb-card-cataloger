@@ -17,15 +17,18 @@ export default function DeckDetailPage() {
   const [editText, setEditText] = useState('');
   const [resolving, setResolving] = useState(false);
   const [resolved, setResolved] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
     if (id) {
       const d = getDeck(id);
+      console.log('DeckDetailPage: id =', id, 'deck =', d);
       if (d) {
         setDeck(d);
         setEditName(d.name);
         setEditText(d.rawDecklist);
       } else {
+        console.error('Deck not found for id:', id);
         navigate('/decks');
       }
     }
@@ -98,8 +101,6 @@ export default function DeckDetailPage() {
   const collection = getCollection();
   const completion = calculateDeckCompletion(deck.parsedDecklist, collection);
   const warnings = validateDecklist(deck.parsedDecklist);
-
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const handleDelete = () => {
     setShowDeleteConfirm(true);
