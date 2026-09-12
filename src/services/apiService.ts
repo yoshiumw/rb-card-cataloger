@@ -60,25 +60,65 @@ export async function fetchCardById(riftboundId: string): Promise<Card | null> {
 
 /**
  * Search cards by name (fuzzy search)
+ * Tries both comma and dash formats for better matching
  */
 export async function searchCardsByName(query: string, page = 1, size = 50): Promise<{ cards: Card[]; total: number }> {
   try {
-    const params = new URLSearchParams({
+    // Try the query as-is first
+    let params = new URLSearchParams({
       fuzzy: query,
       dir: '1',
       page: String(page),
       size: String(size),
     });
     
-    const url = `${API_BASE}/name?${params}`;
-    const response = await fetch(url);
+    let url = `${API_BASE}/name?${params}`;
+    let response = await fetch(url);
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
     
-    const data: RiftboundApiResponse = await response.json();
-    const cards = data.items.map(mapApiCardToCard);
+    let data: RiftboundApiResponse = await response.json();
+    let cards = data.items.map(mapApiCardToCard);
+    
+    // If no results and query contains comma, try with dash
+    if (cards.length === 0 && query.includes(',')) {
+      const dashQuery = query.replace(/,\s*/g, ' - ');
+      params = new URLSearchParams({
+        fuzzy: dashQuery,
+        dir: '1',
+        page: String(page),
+        size: String(size),
+      });
+      
+      url = `${API_BASE}/name?${params}`;
+      response = await fetch(url);
+      
+      if (response.ok) {
+        data = await response.json();
+        cards = data.items.map(mapApiCardToCard);
+      }
+    }
+    
+    // If no results and query contains dash, try with comma
+    if (cards.length === 0 && query.includes(' - ')) {
+      const commaQuery = query.replace(/\s*-\s*/g, ', ');
+      params = new URLSearchParams({
+        fuzzy: commaQuery,
+        dir: '1',
+        page: String(page),
+        size: String(size),
+      });
+      
+      url = `${API_BASE}/name?${params}`;
+      response = await fetch(url);
+      
+      if (response.ok) {
+        data = await response.json();
+        cards = data.items.map(mapApiCardToCard);
+      }
+    }
     
     return {
       cards,
@@ -88,6 +128,16 @@ export async function searchCardsByName(query: string, page = 1, size = 50): Pro
     console.error('Error searching cards by name:', error);
     return { cards: [], total: 0 };
   }
+}
+
+/**
+ * Normalize a card name for matching.
+ * Handles both formats:
+ *   "Kai'Sa, Survivor" (decklist) → "kaisa survivor"
+ *   "Kai'Sa - Survivor" (API) → "kaisa survivor"
+ */
+function normalizeName(name: string): string {
+  return name.toLowerCase().replace(/[,']/g, '').replace(/\s*-\s*/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -106,6 +156,15 @@ export async function findCardByName(cardName: string): Promise<Card | null> {
   );
   
   if (exactMatch) return exactMatch;
+  
+  // Try normalized match (removes commas, apostrophes, converts dashes to spaces)
+  const normalized = normalizeName(cardName);
+  const normalizedMatch = cards.find(c => 
+    normalizeName(c.displayName) === normalized ||
+    normalizeName(c.cardName) === normalized
+  );
+  
+  if (normalizedMatch) return normalizedMatch;
   
   // Otherwise return first result (fuzzy match)
   return cards[0];
