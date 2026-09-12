@@ -5,7 +5,7 @@ import {
   signOut, 
   onAuthStateChanged,
   GoogleAuthProvider,
-  signInWithRedirect,
+  signInWithPopup,
   User as FirebaseUser
 } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
@@ -183,17 +183,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Firebase mode - use redirect instead of popup to avoid popup blockers
+    // Firebase mode - use popup method
     try {
       const provider = new GoogleAuthProvider();
-      console.log('Initiating Google sign-in redirect...');
-      // signInWithRedirect doesn't return a promise that resolves - it initiates redirect
-      await signInWithRedirect(auth!, provider);
-      console.log('Redirect initiated successfully');
+      console.log('Initiating Google sign-in popup...');
+      await signInWithPopup(auth!, provider);
+      console.log('Sign-in successful');
     } catch (err: any) {
       console.error('Google sign-in error:', err);
-      const errorMessage = err?.message || err?.code || 'Unknown error';
-      setError(`Google sign-in failed: ${errorMessage}`);
+      
+      // Handle specific error cases
+      if (err.code === 'auth/popup-blocked') {
+        setError('Popup was blocked. Please allow popups for this site and try again.');
+      } else if (err.code === 'auth/popup-closed-by-user') {
+        setError('Sign-in was cancelled.');
+      } else if (err.code === 'auth/cancelled-popup-request') {
+        setError('Another sign-in is in progress. Please try again.');
+      } else {
+        const errorMessage = err?.message || err?.code || 'Unknown error';
+        setError(`Google sign-in failed: ${errorMessage}`);
+      }
     }
   }, []);
 
