@@ -31,13 +31,6 @@ export default function DeckDetailPage() {
     }
   }, [id, navigate]);
 
-  // Auto-resolve card names when viewing a deck
-  useEffect(() => {
-    if (deck && !resolved) {
-      resolveCards(deck.parsedDecklist);
-    }
-  }, [deck]);
-
   const resolveCards = async (parsed: ParsedDecklist) => {
     const sectionKeys: DeckSectionKey[] = ['legend', 'champion', 'mainDeck', 'battlefields', 'runePool', 'sideboard'];
     
@@ -92,6 +85,13 @@ export default function DeckDetailPage() {
     setResolving(false);
     setResolved(true);
   };
+
+  // Auto-resolve card names when viewing a deck
+  useEffect(() => {
+    if (deck && !resolved) {
+      resolveCards(deck.parsedDecklist);
+    }
+  }, [deck, resolved]);
 
   if (!deck) return null;
 
