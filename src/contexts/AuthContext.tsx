@@ -91,10 +91,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null);
     
     if (!isFirebaseConfigured || !auth) {
-      // Demo mode
+      // Demo mode - generate unique UID based on email
       try {
+        // Create a unique UID from the email address
+        const uid = 'demo-' + email.toLowerCase().replace(/[^a-z0-9]/g, '');
         const demoUser: User = {
-          uid: 'demo-user-001',
+          uid,
           email,
           displayName: email.split('@')[0],
         };
@@ -125,10 +127,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null);
     
     if (!isFirebaseConfigured || !auth) {
-      // Demo mode
+      // Demo mode - generate unique UID based on email
       try {
+        // Create a unique UID from the email address
+        const uid = 'demo-' + email.toLowerCase().replace(/[^a-z0-9]/g, '');
         const newUser: User = {
-          uid: 'demo-user-001',
+          uid,
           email,
           displayName: displayName || email.split('@')[0],
         };
@@ -207,6 +211,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    // Note: We don't clear user data here - it should persist in localStorage
+    // so it's still there when the user logs back in
+    
     if (!isFirebaseConfigured || !auth) {
       // Demo mode
       setUser(null);

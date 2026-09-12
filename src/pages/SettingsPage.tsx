@@ -7,8 +7,18 @@ import { getCollectionAsArray } from '../services/collectionService';
 export default function SettingsPage() {
   const { user, logout } = useAuth();
   const [cacheSize, setCacheSize] = React.useState(getCacheSize());
+  const [collectionSize, setCollectionSize] = React.useState(0);
   const cachedSets = getCachedSets();
-  const collectionSize = getCollectionAsArray().length;
+
+  React.useEffect(() => {
+    if (user) {
+      const loadCollectionSize = async () => {
+        const collection = await getCollectionAsArray(user.uid);
+        setCollectionSize(collection.length);
+      };
+      loadCollectionSize();
+    }
+  }, [user]);
 
   const handleClearCache = () => {
     if (confirm('Clear the card cache? Cards will be re-fetched from the API as needed.')) {

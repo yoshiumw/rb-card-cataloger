@@ -4,18 +4,22 @@ import { getDecks } from '../services/deckService';
 import { getCollection } from '../services/collectionService';
 import { calculateMissingCards } from '../services/completionCalculator';
 import { getCardByName, isCardCached } from '../services/cardLookupService';
+import { useAuth } from '../contexts/AuthContext';
 import { MissingCardSummary, DeckSectionKey } from '../types';
 
 export default function MissingCardsPage() {
+  const { user } = useAuth();
   const [missingCards, setMissingCards] = useState<MissingCardSummary[]>([]);
   const [search, setSearch] = useState('');
   const [deckFilter, setDeckFilter] = useState('');
   const [resolving, setResolving] = useState(false);
 
-  const decks = useMemo(() => getDecks(), []);
+  const decks = useMemo(() => user ? getDecks(user.uid) : [], [user]);
   const deckNames = useMemo(() => decks.map(d => d.name), [decks]);
 
   useEffect(() => {
+    if (!user) return;
+    
     const resolveAndCalculate = async () => {
       if (decks.length === 0) return;
       
@@ -48,13 +52,13 @@ export default function MissingCardsPage() {
       }
 
       // Now calculate missing cards with full cache
-      const collection = getCollection();
+      const collection = await getCollection(user.uid);
       const missing = calculateMissingCards(decks, collection);
       setMissingCards(missing);
     };
 
     resolveAndCalculate();
-  }, [decks]);
+  }, [decks, user]);
 
   const filtered = useMemo(() => {
     let result = missingCards;

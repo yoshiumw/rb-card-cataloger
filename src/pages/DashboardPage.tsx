@@ -13,20 +13,32 @@ import {
 import { getCollectionAsArray, getRecentlyAdded } from '../services/collectionService';
 import { getDecks } from '../services/deckService';
 import { getCollectionStats } from '../services/completionCalculator';
+import { useAuth } from '../contexts/AuthContext';
 import { CollectionEntry, Deck } from '../types';
 
 export default function DashboardPage() {
+  const { user } = useAuth();
   const [stats, setStats] = useState({ totalUnique: 0, totalCards: 0, totalSets: 0 });
   const [recentCards, setRecentCards] = useState<CollectionEntry[]>([]);
   const [decks, setDecks] = useState<Deck[]>([]);
 
   useEffect(() => {
-    const collection = getCollectionAsArray();
-    const collectionMap = new Map(collection.map(c => [c.cardId, c]));
-    setStats(getCollectionStats(collectionMap));
-    setRecentCards(getRecentlyAdded(5));
-    setDecks(getDecks());
-  }, []);
+    if (!user) return;
+    
+    const loadData = async () => {
+      const collection = await getCollectionAsArray(user.uid);
+      const collectionMap = new Map(collection.map(c => [c.cardId, c]));
+      setStats(getCollectionStats(collectionMap));
+      
+      const recent = await getRecentlyAdded(user.uid, 5);
+      setRecentCards(recent);
+      
+      const userDecks = await getDecks(user.uid);
+      setDecks(userDecks);
+    };
+    
+    loadData();
+  }, [user]);
 
   return (
     <div className="space-y-6">

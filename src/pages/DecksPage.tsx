@@ -5,9 +5,11 @@ import { getDecks, deleteDeck, previewDecklist, createDeck } from '../services/d
 import { getCollection } from '../services/collectionService';
 import { calculateDeckCompletion } from '../services/completionCalculator';
 import { validateDecklist } from '../services/decklistParser';
-import { Deck, ParsedDecklist } from '../types';
+import { useAuth } from '../contexts/AuthContext';
+import { Deck, ParsedDecklist, CollectionEntry } from '../types';
 
 export default function DecksPage() {
+  const { user } = useAuth();
   const [decks, setDecks] = useState<Deck[]>([]);
   const [showImport, setShowImport] = useState(false);
   const [importName, setImportName] = useState('');
@@ -18,8 +20,15 @@ export default function DecksPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    setDecks(getDecks());
-  }, []);
+    if (!user) return;
+    
+    const loadDecks = async () => {
+      const userDecks = await getDecks(user.uid);
+      setDecks(userDecks);
+    };
+    
+    loadDecks();
+  }, [user]);
 
   const handlePreview = () => {
     if (!importText.trim()) {
@@ -31,7 +40,8 @@ export default function DecksPage() {
     setError('');
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (!user) return;
     if (!importName.trim()) {
       setError('Please enter a deck name.');
       return;
@@ -41,9 +51,10 @@ export default function DecksPage() {
       return;
     }
 
-    const result = createDeck(importName, importText);
+    const result = await createDeck(user.uid, importName, importText);
     if (result.success && result.deck) {
-      setDecks(getDecks());
+      const userDecks = await getDecks(user.uid);
+      setDecks(userDecks);
       setShowImport(false);
       setImportName('');
       setImportText('');
@@ -59,10 +70,11 @@ export default function DecksPage() {
     setDeleteConfirm({ id: deckId, name });
   };
 
-  const handleDeleteConfirm = () => {
-    if (deleteConfirm) {
-      deleteDeck(deleteConfirm.id);
-      setDecks(getDecks());
+  const handleDeleteConfirm = async () => {
+    if (deleteConfirm && user) {
+      await deleteDeck(user.uid, deleteConfirm.id);
+      const userDecks = await getDecks(user.uid);
+      setDecks(userDecks);
       setDeleteConfirm(null);
     }
   };
@@ -292,8 +304,20 @@ function DeckPreview({ parsed }: { parsed: ParsedDecklist }) {
 }
 
 function DeckCard({ deck, onDelete }: { deck: Deck; onDelete: () => void }) {
+  const { user } = useAuth();
   const navigate = useNavigate();
-  const collection = getCollection();
+  const [collection, setCollection] = useState<Map<string, CollectionEntry>>(new Map());
+  
+  useEffect(() => {
+    if (user) {
+      const loadCollection = async () => {
+        const coll = await getCollection(user.uid);
+        setCollection(coll);
+      };
+      loadCollection();
+    }
+  }, [user]);
+  
   const completion = calculateDeckCompletion(deck.parsedDecklist, collection);
   const warnings = validateDecklist(deck.parsedDecklist);
 

@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { PlusCircle, Check, X, Search, AlertCircle, Loader2 } from 'lucide-react';
 import { addCardToCollection } from '../services/collectionService';
 import { getCardById, isValidCardIdFormat } from '../services/cardLookupService';
+import { useAuth } from '../contexts/AuthContext';
 import { Card, CollectionEntry } from '../types';
 
 interface AddResult {
@@ -13,6 +14,7 @@ interface AddResult {
 }
 
 export default function AddCardsPage() {
+  const { user } = useAuth();
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [lastResult, setLastResult] = useState<AddResult | null>(null);
@@ -51,10 +53,10 @@ export default function AddCardsPage() {
 
   const handleAdd = async () => {
     const cardId = inputValue.trim();
-    if (!cardId) return;
+    if (!cardId || !user) return;
 
     setLoading(true);
-    const result = await addCardToCollection(cardId);
+    const result = await addCardToCollection(user.uid, cardId);
     
     const addResult: AddResult = {
       cardId,

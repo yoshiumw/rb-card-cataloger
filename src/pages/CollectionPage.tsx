@@ -1,13 +1,16 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Search, Filter, SortAsc, SortDesc, Trash2, Minus, Plus, Library } from 'lucide-react';
 import { getCollectionAsArray, removeCardFromCollection, updateCardQuantity, getCollectionSets } from '../services/collectionService';
+import { useAuth } from '../contexts/AuthContext';
 import { CollectionEntry } from '../types';
 
 type SortField = 'name' | 'set' | 'type' | 'quantity' | 'added';
 type SortDir = 'asc' | 'desc';
 
 export default function CollectionPage() {
+  const { user } = useAuth();
   const [collection, setCollection] = useState<CollectionEntry[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [setFilter, setSetFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
@@ -15,10 +18,23 @@ export default function CollectionPage() {
   const [sortDir, setSortDir] = useState<SortDir>('asc');
 
   useEffect(() => {
-    setCollection(getCollectionAsArray());
-  }, []);
+    if (!user) return;
+    
+    const loadCollection = async () => {
+      setLoading(true);
+      const collectionArray = await getCollectionAsArray(user.uid);
+      setCollection(collectionArray);
+      setLoading(false);
+    };
+    
+    loadCollection();
+  }, [user]);
 
-  const sets = useMemo(() => getCollectionSets(), [collection]);
+  const sets = useMemo(() => {
+    const uniqueSets = new Set<string>();
+    collection.forEach(entry => uniqueSets.add(entry.set));
+    return Array.from(uniqueSets).sort();
+  }, [collection]);
 
   const cardTypes = useMemo(() => {
     const types = new Set(collection.map(c => c.cardType));
@@ -63,22 +79,29 @@ export default function CollectionPage() {
 
   const totalCards = collection.reduce((s, c) => s + c.quantity, 0);
 
-  const handleQuantityChange = (cardId: string, delta: number) => {
+  const handleQuantityChange = async (cardId: string, delta: number) => {
+    if (!user) return;
     const entry = collection.find(c => c.cardId === cardId);
     if (!entry) return;
     const newQty = entry.quantity + delta;
+    
     if (newQty <= 0) {
-      removeCardFromCollection(cardId);
+      await removeCardFromCollection(user.uid, cardId);
     } else {
-      updateCardQuantity(cardId, newQty);
+      await updateCardQuantity(user.uid, cardId, newQty);
     }
-    setCollection(getCollectionAsArray());
+    
+    // Reload collection
+    const collectionArray = await getCollectionAsArray(user.uid);
+    setCollection(collectionArray);
   };
 
-  const handleRemove = (cardId: string) => {
+  const handleRemove = async (cardId: string) => {
+    if (!user) return;
     if (confirm('Remove this card from your collection?')) {
-      removeCardFromCollection(cardId);
-      setCollection(getCollectionAsArray());
+      await removeCardFromCollection(user.uid, cardId);
+      const collectionArray = await getCollectionAsArray(user.uid);
+      setCollection(collectionArray);
     }
   };
 

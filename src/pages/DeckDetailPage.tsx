@@ -6,12 +6,15 @@ import { getCollection } from '../services/collectionService';
 import { calculateDeckCompletion } from '../services/completionCalculator';
 import { validateDecklist } from '../services/decklistParser';
 import { getCardByName, isCardCached, getCachedCards } from '../services/cardLookupService';
-import { Deck, ParsedDecklist, SectionCompletion, DeckSectionKey } from '../types';
+import { useAuth } from '../contexts/AuthContext';
+import { Deck, ParsedDecklist, SectionCompletion, DeckSectionKey, CollectionEntry } from '../types';
 
 export default function DeckDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [deck, setDeck] = useState<Deck | null>(null);
+  const [collection, setCollection] = useState<Map<string, CollectionEntry>>(new Map());
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
   const [editText, setEditText] = useState('');
@@ -20,19 +23,32 @@ export default function DeckDetailPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
-    if (id) {
-      const d = getDeck(id);
-      console.log('DeckDetailPage: id =', id, 'deck =', d);
-      if (d) {
-        setDeck(d);
-        setEditName(d.name);
-        setEditText(d.rawDecklist);
-      } else {
-        console.error('Deck not found for id:', id);
-        navigate('/decks');
-      }
+    if (id && user) {
+      const loadDeck = async () => {
+        const d = await getDeck(user.uid, id);
+        console.log('DeckDetailPage: id =', id, 'deck =', d);
+        if (d) {
+          setDeck(d);
+          setEditName(d.name);
+          setEditText(d.rawDecklist);
+        } else {
+          console.error('Deck not found for id:', id);
+          navigate('/decks');
+        }
+      };
+      loadDeck();
     }
-  }, [id, navigate]);
+  }, [id, navigate, user]);
+
+  useEffect(() => {
+    if (user) {
+      const loadCollection = async () => {
+        const coll = await getCollection(user.uid);
+        setCollection(coll);
+      };
+      loadCollection();
+    }
+  }, [user]);
 
   const resolveCards = async (parsed: ParsedDecklist) => {
     const sectionKeys: DeckSectionKey[] = ['legend', 'champion', 'mainDeck', 'battlefields', 'runePool', 'sideboard'];
@@ -96,9 +112,8 @@ export default function DeckDetailPage() {
     }
   }, [deck, resolved]);
 
-  if (!deck) return null;
+  if (!deck || !user) return null;
 
-  const collection = getCollection();
   const completion = calculateDeckCompletion(deck.parsedDecklist, collection);
   const warnings = validateDecklist(deck.parsedDecklist);
 
@@ -107,7 +122,7 @@ export default function DeckDetailPage() {
   };
 
   const handleDeleteConfirm = () => {
-    deleteDeck(deck.id);
+    deleteDeck(user.uid, deck.id);
     navigate('/decks');
   };
 
@@ -115,8 +130,8 @@ export default function DeckDetailPage() {
     setShowDeleteConfirm(false);
   };
 
-  const handleSaveEdit = () => {
-    const result = updateDeck(deck.id, editName, editText);
+  const handleSaveEdit = async () => {
+    const result = await updateDeck(user.uid, deck.id, editName, editText);
     if (result.success && result.deck) {
       setDeck(result.deck);
       setEditing(false);
