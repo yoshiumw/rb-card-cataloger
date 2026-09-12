@@ -208,7 +208,7 @@ function DeckPreview({ parsed }: { parsed: ParsedDecklist }) {
         {parsed.mainDeck.length > 0 && (
           <div className="p-2 rounded bg-gray-700/50">
             <span className="text-gray-400">Main:</span>{' '}
-            <span className="text-white">{parsed.mainDeck.reduce((s, c) => s + c.quantity, 0)}</span>
+            <span className="text-white">{parsed.mainDeck.reduce((s, c) => s + c.quantity, 0) + parsed.champion.reduce((s, c) => s + c.quantity, 0)}</span>
           </div>
         )}
         {parsed.battlefields.length > 0 && (
@@ -307,7 +307,10 @@ function DeckCard({ deck, onDelete }: { deck: Deck; onDelete: () => void }) {
         {completion.mainDeckCompletion && (
           <div className="p-2 rounded bg-gray-700/50">
             <span className="text-gray-400">Main: </span>
-            <span className="text-white">{completion.mainDeckCompletion.totalOwned}/{completion.mainDeckCompletion.totalRequired}</span>
+            <span className="text-white">
+              {completion.mainDeckCompletion.totalOwned + (completion.sections.find(s => s.sectionKey === 'champion')?.totalOwned || 0)}/
+              {completion.mainDeckCompletion.totalRequired + (completion.sections.find(s => s.sectionKey === 'champion')?.totalRequired || 0)}
+            </span>
           </div>
         )}
         {completion.sideboardCompletion && (

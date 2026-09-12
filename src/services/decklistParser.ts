@@ -183,12 +183,15 @@ export function validateDecklist(parsed: ParsedDecklist): string[] {
     warnings.push(`Multiple Champion cards found (${parsed.champion.length}). A deck should have exactly 1 Champion.`);
   }
 
-  // Check MainDeck size
+  // Check MainDeck size (Champion counts toward the 40-card minimum)
   const mainDeckTotal = parsed.mainDeck.reduce((sum, c) => sum + c.quantity, 0);
-  if (mainDeckTotal < 40) {
-    warnings.push(`Main Deck has only ${mainDeckTotal} cards. Minimum deck size is typically 40.`);
-  } else if (mainDeckTotal > 60) {
-    warnings.push(`Main Deck has ${mainDeckTotal} cards. Maximum deck size is typically 60.`);
+  const championTotal = parsed.champion.reduce((sum, c) => sum + c.quantity, 0);
+  const totalDeckSize = mainDeckTotal + championTotal;
+  
+  if (totalDeckSize < 40) {
+    warnings.push(`Deck has only ${totalDeckSize} cards (${mainDeckTotal} main + ${championTotal} champion). Minimum deck size is 40.`);
+  } else if (totalDeckSize > 60) {
+    warnings.push(`Deck has ${totalDeckSize} cards (${mainDeckTotal} main + ${championTotal} champion). Maximum deck size is 60.`);
   }
 
   // Check Rune Pool

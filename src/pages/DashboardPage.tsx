@@ -160,7 +160,7 @@ export default function DashboardPage() {
                   <div>
                     <p className="text-sm font-medium text-white">{deck.name}</p>
                     <p className="text-xs text-gray-400">
-                      {deck.parsedDecklist.mainDeck.reduce((s, c) => s + c.quantity, 0)} cards
+                      {deck.parsedDecklist.mainDeck.reduce((s, c) => s + c.quantity, 0) + deck.parsedDecklist.champion.reduce((s, c) => s + c.quantity, 0)} cards
                     </p>
                   </div>
                   <ArrowRight size={16} className="text-gray-400" />
