@@ -1,8 +1,38 @@
-import React from 'react';
-import { isFirebaseConfigured } from '../firebase/config';
-import { Check, X, AlertCircle } from 'lucide-react';
+import React, { useState } from 'react';
+import { isFirebaseConfigured, auth, db } from '../firebase/config';
+import { Check, X, AlertCircle, TestTube } from 'lucide-react';
 
 export default function DebugPage() {
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [testing, setTesting] = useState(false);
+
+  const testFirebase = async () => {
+    setTesting(true);
+    setTestResult(null);
+    
+    try {
+      if (!auth) {
+        throw new Error('Firebase auth is not initialized');
+      }
+      
+      // Try to get the current user (will be null if not signed in, but won't throw)
+      const currentUser = auth.currentUser;
+      
+      setTestResult({
+        success: true,
+        message: `Firebase is working! Current user: ${currentUser ? currentUser.email : 'Not signed in'}`
+      });
+    } catch (err: any) {
+      console.error('Firebase test error:', err);
+      setTestResult({
+        success: false,
+        message: `Firebase test failed: ${err?.message || 'Unknown error'}`
+      });
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const envVars = {
     VITE_FIREBASE_API_KEY: import.meta.env.VITE_FIREBASE_API_KEY,
     VITE_FIREBASE_AUTH_DOMAIN: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -101,6 +131,21 @@ export default function DebugPage() {
               App is running in {isFirebaseConfigured ? 'Firebase mode' : 'demo mode'}
             </span>
           </div>
+          {isFirebaseConfigured && (
+            <div className="mt-4 p-4 bg-yellow-600/10 border border-yellow-500/30 rounded-lg">
+              <p className="text-sm text-yellow-300 mb-2">
+                <strong>Important for Google Sign-In:</strong>
+              </p>
+              <p className="text-xs text-gray-300 mb-2">
+                Make sure you've added these domains to Firebase Authentication → Settings → Authorized domains:
+              </p>
+              <ul className="text-xs text-gray-400 space-y-1 ml-4">
+                <li>• <code className="bg-gray-700 px-2 py-0.5 rounded">*.qwen.ai</code> (for Qwen preview)</li>
+                <li>• <code className="bg-gray-700 px-2 py-0.5 rounded">yoshiumw.github.io</code> (for GitHub Pages)</li>
+                <li>• <code className="bg-gray-700 px-2 py-0.5 rounded">localhost</code> (for local dev)</li>
+              </ul>
+            </div>
+          )}
         </div>
       </div>
 
@@ -145,6 +190,39 @@ export default function DebugPage() {
           </div>
         )}
       </div>
+
+      {/* Firebase Test */}
+      {isFirebaseConfigured && (
+        <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
+          <h2 className="text-lg font-semibold text-white mb-4">Test Firebase Connection</h2>
+          <button
+            onClick={testFirebase}
+            disabled={testing}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+          >
+            <TestTube size={18} />
+            {testing ? 'Testing...' : 'Test Firebase'}
+          </button>
+          {testResult && (
+            <div className={`mt-4 p-4 rounded-lg border ${
+              testResult.success 
+                ? 'bg-green-600/10 border-green-500/30' 
+                : 'bg-red-600/10 border-red-500/30'
+            }`}>
+              <div className="flex items-start gap-3">
+                {testResult.success ? (
+                  <Check size={20} className="text-green-400 flex-shrink-0 mt-0.5" />
+                ) : (
+                  <X size={20} className="text-red-400 flex-shrink-0 mt-0.5" />
+                )}
+                <p className={`text-sm ${testResult.success ? 'text-green-300' : 'text-red-300'}`}>
+                  {testResult.message}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Console Log Helper */}
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">

@@ -196,9 +196,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Firebase mode - use redirect instead of popup to avoid popup blockers
     try {
       const provider = new GoogleAuthProvider();
-      await signInWithRedirect(auth!, provider);
+      // signInWithRedirect doesn't return a promise that resolves - it initiates redirect
+      signInWithRedirect(auth!, provider);
     } catch (err: any) {
-      setError('Google sign-in failed. Please try again.');
+      console.error('Google sign-in error:', err);
+      const errorMessage = err?.message || err?.code || 'Unknown error';
+      setError(`Google sign-in failed: ${errorMessage}`);
     }
   }, []);
 
