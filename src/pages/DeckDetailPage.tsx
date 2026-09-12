@@ -5,7 +5,7 @@ import { getDeck, deleteDeck, updateDeck } from '../services/deckService';
 import { getCollection } from '../services/collectionService';
 import { calculateDeckCompletion } from '../services/completionCalculator';
 import { validateDecklist } from '../services/decklistParser';
-import { getCardByName, isCardCached } from '../services/cardLookupService';
+import { getCardByName, isCardCached, getCachedCards } from '../services/cardLookupService';
 import { Deck, ParsedDecklist, SectionCompletion, DeckSectionKey } from '../types';
 
 export default function DeckDetailPage() {
@@ -49,7 +49,31 @@ export default function DeckDetailPage() {
     }
 
     // Only resolve cards that aren't already cached
-    const uncachedNames = allCardNames.filter(name => !isCardCached(name));
+    // Use flexible matching to check if already cached
+    const uncachedNames = allCardNames.filter(name => {
+      if (isCardCached(name)) return false;
+      
+      // Also check if a similar name is cached (handles variations like "Kennen, Heart of the Tempest" vs "Yordle, Kennen - Heart of the Tempest")
+      const cachedCards = getCachedCards();
+      for (const cachedCard of cachedCards) {
+        const normalizedDecklist = name.toLowerCase().replace(/[,']/g, '').replace(/\s*-\s*/g, ' ').replace(/\s+/g, ' ').trim();
+        const normalizedCached = cachedCard.cardName.toLowerCase().replace(/[,']/g, '').replace(/\s*-\s*/g, ' ').replace(/\s+/g, ' ').trim();
+        
+        if (normalizedCached.includes(normalizedDecklist) || normalizedDecklist.includes(normalizedCached)) {
+          return false;
+        }
+        
+        // Check word overlap
+        const decklistWords = normalizedDecklist.split(' ').filter((w: string) => w.length > 2);
+        const cachedWords = normalizedCached.split(' ').filter((w: string) => w.length > 2);
+        const matchingWords = decklistWords.filter((word: string) => cachedWords.includes(word));
+        if (decklistWords.length > 0 && matchingWords.length / decklistWords.length >= 0.7) {
+          return false;
+        }
+      }
+      
+      return true;
+    });
     
     if (uncachedNames.length === 0) {
       setResolved(true);

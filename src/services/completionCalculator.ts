@@ -30,6 +30,35 @@ function normalizeName(name: string): string {
 }
 
 /**
+ * Check if two card names match, allowing for variations.
+ * Handles cases like:
+ *   - "Kennen, Heart of the Tempest" vs "Yordle, Kennen - Heart of the Tempest"
+ *   - Different punctuation and formatting
+ */
+function namesMatch(decklistName: string, cachedName: string): boolean {
+  const normalizedDecklist = normalizeName(decklistName);
+  const normalizedCached = normalizeName(cachedName);
+  
+  // Exact match after normalization
+  if (normalizedDecklist === normalizedCached) return true;
+  
+  // Check if one is a substring of the other
+  if (normalizedCached.includes(normalizedDecklist) || normalizedDecklist.includes(normalizedCached)) {
+    return true;
+  }
+  
+  // Check if the significant words match (ignore common prefixes like "Yordle", "The", etc.)
+  const decklistWords = normalizedDecklist.split(' ').filter(w => w.length > 2);
+  const cachedWords = normalizedCached.split(' ').filter(w => w.length > 2);
+  
+  // If most words from the decklist name appear in the cached name, it's a match
+  const matchingWords = decklistWords.filter(word => cachedWords.includes(word));
+  const matchRatio = matchingWords.length / decklistWords.length;
+  
+  return matchRatio >= 0.7; // 70% of words must match
+}
+
+/**
  * Build a name-based index from the collection
  */
 function buildCollectionNameIndex(collection: Map<string, CollectionEntry>): Map<string, CollectionEntry> {
@@ -42,6 +71,32 @@ function buildCollectionNameIndex(collection: Map<string, CollectionEntry>): Map
     index.set(entry.displayName.toLowerCase(), entry);
   });
   return index;
+}
+
+/**
+ * Find a collection entry by card name using flexible matching
+ */
+function findCollectionEntry(
+  cardName: string,
+  collectionByName: Map<string, CollectionEntry>
+): CollectionEntry | undefined {
+  // Try exact normalized match first
+  const normalized = normalizeName(cardName);
+  let entry = collectionByName.get(normalized);
+  if (entry) return entry;
+  
+  // Try lowercase match
+  entry = collectionByName.get(cardName.toLowerCase());
+  if (entry) return entry;
+  
+  // Try flexible matching
+  for (const [key, value] of collectionByName.entries()) {
+    if (namesMatch(cardName, value.cardName) || namesMatch(cardName, value.displayName)) {
+      return value;
+    }
+  }
+  
+  return undefined;
 }
 
 /**
@@ -72,21 +127,35 @@ function calculateSectionCompletion(
   let totalOwned = 0;
 
   for (const deckCard of cards) {
-    // Try to find the card in the collection by normalized name
-    const normalizedDeckName = normalizeName(deckCard.cardName);
-    const collectionEntry = 
-      collectionByName.get(normalizedDeckName) ||
-      collectionByName.get(deckCard.cardName.toLowerCase());
+    // Try to find the card in the collection using flexible matching
+    const collectionEntry = findCollectionEntry(deckCard.cardName, collectionByName);
     
     const owned = collectionEntry ? collectionEntry.quantity : 0;
     const missing = Math.max(0, deckCard.quantity - owned);
     const actualOwned = Math.min(owned, deckCard.quantity);
 
-    // Try to get card ID from cache
-    const cardId = 
+    // Try to get card ID from cache using flexible matching
+    const normalizedDeckName = normalizeName(deckCard.cardName);
+    let cardId = 
       cardNameIndex.get(normalizedDeckName) ||
-      cardNameIndex.get(deckCard.cardName.toLowerCase()) ||
-      collectionEntry?.cardId;
+      cardNameIndex.get(deckCard.cardName.toLowerCase());
+    
+    // If not found in index, try flexible matching against cached cards
+    if (!cardId) {
+      const cachedCards = getCachedCards();
+      for (const cachedCard of cachedCards) {
+        if (namesMatch(deckCard.cardName, cachedCard.cardName) || 
+            namesMatch(deckCard.cardName, cachedCard.displayName)) {
+          cardId = cachedCard.cardId;
+          break;
+        }
+      }
+    }
+    
+    // Fall back to collection entry's card ID
+    if (!cardId && collectionEntry) {
+      cardId = collectionEntry.cardId;
+    }
 
     totalRequired += deckCard.quantity;
     totalOwned += actualOwned;
@@ -184,7 +253,19 @@ export function calculateMissingCards(
     for (const key of sectionKeys) {
       for (const card of parsed[key]) {
         const normalizedName = normalizeName(card.cardName);
-        const cardId = cardNameIndex.get(normalizedName) || cardNameIndex.get(card.cardName.toLowerCase());
+        let cardId = cardNameIndex.get(normalizedName) || cardNameIndex.get(card.cardName.toLowerCase());
+        
+        // If not found in index, try flexible matching against cached cards
+        if (!cardId) {
+          const cachedCards = getCachedCards();
+          for (const cachedCard of cachedCards) {
+            if (namesMatch(card.cardName, cachedCard.cardName) || 
+                namesMatch(card.cardName, cachedCard.displayName)) {
+              cardId = cachedCard.cardId;
+              break;
+            }
+          }
+        }
 
         if (!cardRequirements.has(normalizedName)) {
           cardRequirements.set(normalizedName, {
@@ -210,10 +291,8 @@ export function calculateMissingCards(
   const missingCards: MissingCardSummary[] = [];
 
   cardRequirements.forEach(req => {
-    const normalizedName = normalizeName(req.cardName);
-    const collectionEntry = 
-      collectionByName.get(normalizedName) ||
-      collectionByName.get(req.cardName.toLowerCase());
+    // Use flexible matching to find collection entry
+    const collectionEntry = findCollectionEntry(req.cardName, collectionByName);
     const owned = collectionEntry ? collectionEntry.quantity : 0;
     const stillNeeded = Math.max(0, req.totalRequired - owned);
 
