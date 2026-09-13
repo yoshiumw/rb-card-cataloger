@@ -13,7 +13,7 @@ const MAX_SET_CODE_EDIT_DISTANCE = 1;
 const KNOWN_SET_CODES = ['VEN']; // TODO: populate with full list of valid set codes
 
 // Diagnostic flags for isolating OCR failures
-const INVERT_BINARIZED_OUTPUT = false; // TODO: test true if OCR fails on visibly-clear text (white-on-dark polarity)
+const INVERT_BINARIZED_OUTPUT = true; // TODO: test true if OCR fails on visibly-clear text (white-on-dark polarity)
 const BYPASS_PREPROCESSING = false; // TODO: test true to send Tesseract the raw crop, no grayscale/threshold/scale
 
 // Small box sized for a single short text line (e.g. "VEN • 101/166 • EN")
