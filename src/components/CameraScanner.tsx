@@ -762,24 +762,27 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             return;
           }
 
-          // Build a regex that matches ONLY known set codes followed by card numbers
-          // Pattern: SET_CODE • NUMBER/TOTAL (e.g. "VEN • 153/221" or "SFD-100-298")
+          // Build a pattern that matches known set codes with flexible separators
+          // Valid formats: "SFD-153/221", "SFD153/221", "SFD • 153/221", etc.
           const setCodePattern = KNOWN_SET_CODES.join('|');
+
+          // Match: SET_CODE [optional separator] NUMBER [optional /TOTAL]
+          // This is intentionally permissive on separators and spacing
           const strictPattern = new RegExp(
-            `\\b(${setCodePattern})\\s*[-•·.\\s]+\\s*(\\d{1,4})\\s*(?:[/-•·]\\s*\\d{1,4})?\\b`,
+            `(${setCodePattern})\\s*[-•·.\\s]*\\s*(\\d{1,4})\\s*(?:[/-]\\s*\\d{1,4})?`,
             'i'
           );
 
-          const match = text.match(strictPattern);
+          const match = result.data.text.match(strictPattern);
           let cardId: string | null = null;
 
           if (match) {
             const setCode = match[1].toUpperCase();
             const cardNumber = match[2];
             cardId = `${setCode}-${cardNumber}`;
-            console.log('[CameraScanner] Matched known set code:', cardId, 'from:', JSON.stringify(text));
+            console.log('[CameraScanner] Matched card ID:', cardId, 'from text:', JSON.stringify(result.data.text));
           } else {
-            console.log('[CameraScanner] No match against known set codes in:', JSON.stringify(text));
+            console.log('[CameraScanner] No valid card ID found in:', JSON.stringify(result.data.text));
           }
 
           if (cardId) {
