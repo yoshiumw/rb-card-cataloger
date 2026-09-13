@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Camera, X, Loader2, ChevronUp, ChevronDown } from 'lucide-react';
+import { Camera, X, Loader2 } from 'lucide-react';
 import Tesseract, { PSM } from 'tesseract.js';
 
 // Configuration constants
@@ -14,11 +14,54 @@ const KNOWN_SET_CODES = ['VEN']; // TODO: populate with full list of valid set c
 
 // Small box sized for a single short text line (e.g. "VEN • 101/166 • EN")
 // Width is generous (positioning slack); height is tight (maximizes character pixel size)
+// These are used ONLY for initial CSS sizing of the overlay - actual crop coords come from getBoundingClientRect()
 const TEXT_BOX_WIDTH_RATIO = 0.55;   // fraction of frame width
 const TEXT_BOX_HEIGHT_RATIO = 0.06;  // fraction of frame height
 
 // Alignment check threshold
 const MIN_DARK_PIXEL_RATIO = 0.05; // minimum fraction of dark pixels to proceed with OCR
+
+/**
+ * Converts a bounding box expressed as fractions of the displayed video element
+ * (e.g. where an on-screen overlay sits) into pixel coordinates on the raw video
+ * frame, accounting for object-cover scaling/cropping.
+ */
+function mapDisplayRectToVideoRect(
+  displayXRatio: number,
+  displayYRatio: number,
+  displayWidthRatio: number,
+  displayHeightRatio: number,
+  videoWidth: number,
+  videoHeight: number,
+  displayWidth: number,
+  displayHeight: number
+): { x: number; y: number; width: number; height: number } {
+  const videoAspect = videoWidth / videoHeight;
+  const displayAspect = displayWidth / displayHeight;
+
+  let renderedWidth: number, renderedHeight: number, offsetX: number, offsetY: number;
+
+  if (videoAspect > displayAspect) {
+    // Video is relatively wider than display box -> full height shown, sides cropped
+    renderedHeight = videoHeight;
+    renderedWidth = videoHeight * displayAspect;
+    offsetX = (videoWidth - renderedWidth) / 2;
+    offsetY = 0;
+  } else {
+    // Video is relatively taller than display box -> full width shown, top/bottom cropped
+    renderedWidth = videoWidth;
+    renderedHeight = videoWidth / displayAspect;
+    offsetX = 0;
+    offsetY = (videoHeight - renderedHeight) / 2;
+  }
+
+  return {
+    x: Math.floor(offsetX + displayXRatio * renderedWidth),
+    y: Math.floor(offsetY + displayYRatio * renderedHeight),
+    width: Math.floor(displayWidthRatio * renderedWidth),
+    height: Math.floor(displayHeightRatio * renderedHeight),
+  };
+}
 
 /**
  * Compute Levenshtein distance between two strings.
@@ -184,6 +227,7 @@ interface CameraScannerProps {
 
 export default function CameraScanner({ onCardIdDetected, onClose }: CameraScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const workerRef = useRef<Tesseract.Worker | null>(null);
   const isProcessingRef = useRef<boolean>(false);
@@ -191,7 +235,6 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scanningStatus, setScanningStatus] = useState('Initializing OCR engine...');
-  const [showInstructions, setShowInstructions] = useState(false);
   const [debugImageUrl, setDebugImageUrl] = useState<string | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const isScanningRef = useRef(false);
@@ -416,15 +459,54 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
       // Draw video frame to canvas
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Crop region matches the visual text box overlay exactly
-      // These ratios/offsets must stay visually consistent with the overlay's Tailwind positioning (bottom-8 left-4)
-      // If one changes, the other must be updated to match, since misalignment between the visual guide
-      // and the actual crop region silently breaks everything regardless of preprocessing quality.
-      const cropWidth = Math.floor(canvas.width * TEXT_BOX_WIDTH_RATIO);
-      const cropHeight = Math.floor(canvas.height * TEXT_BOX_HEIGHT_RATIO);
-      const cropX = Math.floor(canvas.width * 0.02); // small left inset matching the "left-4" overlay offset
-      const cropY = canvas.height - cropHeight - Math.floor(canvas.height * 0.02); // matching "bottom-8" offset
-      if (DEBUG) console.log('[CameraScanner] Crop region:', { x: cropX, y: cropY, width: cropWidth, height: cropHeight });
+      // Crop region: use overlay's actual on-screen position/size via getBoundingClientRect()
+      // This accounts for object-cover scaling mismatch between displayed video and raw stream
+      if (!overlayRef.current) {
+        if (DEBUG) console.log('[CameraScanner] Overlay ref not ready, retrying in 100ms');
+        if (isScanningRef.current) {
+          setTimeout(scanFrame, 100);
+        }
+        return;
+      }
+
+      const videoRect = videoRef.current?.getBoundingClientRect();
+      const overlayRect = overlayRef.current.getBoundingClientRect();
+
+      if (!videoRect) {
+        if (DEBUG) console.log('[CameraScanner] Video rect not ready, retrying in 100ms');
+        if (isScanningRef.current) {
+          setTimeout(scanFrame, 100);
+        }
+        return;
+      }
+
+      // Compute overlay position as fractions relative to the video's displayed box
+      const displayXRatio = (overlayRect.left - videoRect.left) / videoRect.width;
+      const displayYRatio = (overlayRect.top - videoRect.top) / videoRect.height;
+      const displayWidthRatio = overlayRect.width / videoRect.width;
+      const displayHeightRatio = overlayRect.height / videoRect.height;
+
+      // Convert display coordinates to raw video frame pixel coordinates
+      const cropRegion = mapDisplayRectToVideoRect(
+        displayXRatio,
+        displayYRatio,
+        displayWidthRatio,
+        displayHeightRatio,
+        video.videoWidth,
+        video.videoHeight,
+        videoRect.width,
+        videoRect.height
+      );
+
+      const cropX = cropRegion.x;
+      const cropY = cropRegion.y;
+      const cropWidth = cropRegion.width;
+      const cropHeight = cropRegion.height;
+
+      if (DEBUG) console.log('[CameraScanner] Video rect:', videoRect.width, 'x', videoRect.height, 
+        'Canvas:', canvas.width, 'x', canvas.height,
+        'Overlay rect:', overlayRect.width.toFixed(1), 'x', overlayRect.height.toFixed(1),
+        'Crop:', { x: cropX, y: cropY, width: cropWidth, height: cropHeight });
 
       // Extract the region
       const imageData = context.getImageData(cropX, cropY, cropWidth, cropHeight);
@@ -810,6 +892,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
               
               {/* Text box guide in bottom-left */}
               <div
+                ref={overlayRef}
                 className="absolute bottom-8 left-4 border-4 border-purple-500 border-dashed rounded-lg animate-pulse pointer-events-none"
                 style={{
                   width: `${TEXT_BOX_WIDTH_RATIO * 100}%`,
@@ -820,46 +903,20 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
                   Fill this box with the ID line
                 </div>
               </div>
-              
-              {/* Status text - compact, positioned at bottom near scanning area */}
-              <div className="absolute bottom-4 left-4 right-4 text-center">
-                <div className="inline-block bg-black/80 px-4 py-2 rounded-lg backdrop-blur-sm max-w-full">
-                  <p className="text-white text-xs font-medium truncate">
-                    {isScanning && <Loader2 size={14} className="inline animate-spin mr-1" />}
-                    {scanningStatus}
-                  </p>
-                </div>
-              </div>
             </div>
           </>
         )}
       </div>
 
-      {/* Collapsible Instructions */}
+      {/* Scanning status bar - compact, positioned at bottom */}
       {!error && (
-        <div className="bg-gray-900 border-t border-gray-700 relative" style={{ zIndex: 20 }}>
-          <button
-            onClick={() => setShowInstructions(!showInstructions)}
-            className="w-full p-3 flex items-center justify-between text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
-          >
-            <span className="text-sm font-medium">How to scan</span>
-            {showInstructions ? (
-              <ChevronUp size={18} />
-            ) : (
-              <ChevronDown size={18} />
-            )}
-          </button>
-          {showInstructions && (
-            <div className="px-4 pb-4 max-w-2xl mx-auto">
-              <ul className="text-gray-400 text-sm space-y-1">
-                <li>• Zoom/move in so the small text line at the bottom of the card (e.g. set code and number) fills the purple box.</li>
-                <li>• Ensure good lighting - avoid shadows and glare on the card</li>
-                <li>• Hold steady while the scanner processes the image (watch for status updates)</li>
-                <li>• The scanner will automatically detect and extract the card ID</li>
-                <li>• If text is detected but not recognized, try adjusting the angle or distance</li>
-              </ul>
-            </div>
-          )}
+        <div className="bg-gray-900 border-t border-gray-700 p-3 relative" style={{ zIndex: 20 }}>
+          <div className="max-w-2xl mx-auto text-center">
+            <p className="text-gray-400 text-sm font-medium">
+              {isScanning && <Loader2 size={14} className="inline animate-spin mr-2" />}
+              {scanningStatus}
+            </p>
+          </div>
         </div>
       )}
     </div>
