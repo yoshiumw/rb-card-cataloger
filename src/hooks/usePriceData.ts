@@ -88,11 +88,22 @@ export function usePriceData() {
     });
     
     const results = fuse.search(cardName);
+    console.log('=== Fuzzy Match Debug ===');
+    console.log('Looking for:', cardName);
+    console.log('Total prices in DB:', priceArray.length);
+    console.log('Raw Fuse results count:', results.length);
+    if (results.length > 0) {
+      console.log('First result:', results[0].item.name, '| subTypeName:', results[0].item.subTypeName);
+    }
+    
     if (results.length === 0) return undefined;
 
     // Prefer "Normal" variant if found among the matches
     const normalMatch = results.find((r) => r.item.subTypeName === 'Normal');
-    return normalMatch?.item ?? results[0].item;
+    const finalResult = normalMatch?.item ?? results[0].item;
+    console.log('Final match:', finalResult.name, '| subTypeName:', finalResult.subTypeName);
+    console.log('========================');
+    return finalResult;
   };
 
   return { prices, getPriceByCardNumber, getPriceByExactId, getPriceByName, loading, error };
