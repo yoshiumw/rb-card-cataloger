@@ -216,27 +216,87 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
       if (tempContext) {
         tempContext.putImageData(imageData, 0, 0);
         
-        // Apply image preprocessing for better OCR accuracy
-        // Convert to grayscale and increase contrast
-        const pixels = tempContext.getImageData(0, 0, cropWidth, cropHeight);
+        // Apply advanced image preprocessing for better OCR accuracy
+        const cropWidth = imageData.width;
+        const cropHeight = imageData.height;
+        
+        // Step 1: Scale up 4x for maximum character detail (increased from 3x)
+        const scale = 4;
+        const scaledWidth = cropWidth * scale;
+        const scaledHeight = cropHeight * scale;
+        
+        const scaledCanvas = document.createElement('canvas');
+        scaledCanvas.width = scaledWidth;
+        scaledCanvas.height = scaledHeight;
+        const scaledContext = scaledCanvas.getContext('2d');
+        
+        if (!scaledContext) return;
+        
+        // Draw with smoothing disabled for sharper edges
+        scaledContext.imageSmoothingEnabled = false;
+        scaledContext.drawImage(tempCanvas, 0, 0, scaledWidth, scaledHeight);
+        
+        // Step 2: Get pixels and apply preprocessing
+        const pixels = scaledContext.getImageData(0, 0, scaledWidth, scaledHeight);
         const data = pixels.data;
+        
+        // Step 3: Convert to grayscale using luminance formula
         for (let i = 0; i < data.length; i += 4) {
-          // Convert to grayscale using luminance formula
           const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-          
-          // Apply threshold for binarization (improves OCR accuracy)
-          const threshold = 128;
-          const value = gray > threshold ? 255 : 0;
-          
-          data[i] = value;     // R
-          data[i + 1] = value; // G
-          data[i + 2] = value; // B
+          data[i] = gray;     // R
+          data[i + 1] = gray; // G
+          data[i + 2] = gray; // B
         }
-        tempContext.putImageData(pixels, 0, 0);
+        
+        // Step 4: Apply adaptive threshold for binarization
+        // Calculate local threshold based on neighborhood
+        const threshold = 140; // Slightly higher for better contrast
+        for (let i = 0; i < data.length; i += 4) {
+          const gray = data[i];
+          // Boost contrast: make dark darker, light lighter
+          const value = gray > threshold ? 255 : 0;
+          data[i] = value;
+          data[i + 1] = value;
+          data[i + 2] = value;
+        }
+        
+        // Step 5: Apply morphological erosion to remove small noise
+        // Simple 3x3 erosion kernel
+        const erodedData = new Uint8ClampedArray(data);
+        const width = scaledWidth;
+        const height = scaledHeight;
+        
+        for (let y = 1; y < height - 1; y++) {
+          for (let x = 1; x < width - 1; x++) {
+            const idx = (y * width + x) * 4;
+            let minVal = 255;
+            
+            // Check 3x3 neighborhood
+            for (let dy = -1; dy <= 1; dy++) {
+              for (let dx = -1; dx <= 1; dx++) {
+                const nIdx = ((y + dy) * width + (x + dx)) * 4;
+                if (data[nIdx] < minVal) {
+                  minVal = data[nIdx];
+                }
+              }
+            }
+            
+            erodedData[idx] = minVal;
+            erodedData[idx + 1] = minVal;
+            erodedData[idx + 2] = minVal;
+          }
+        }
+        
+        // Copy eroded data back
+        for (let i = 0; i < data.length; i++) {
+          data[i] = erodedData[i];
+        }
+        
+        scaledContext.putImageData(pixels, 0, 0);
         
         // Convert to data URL for Tesseract
-        const imageUrl = tempCanvas.toDataURL('image/png');
-        console.log('[CameraScanner] Image URL generated, length:', imageUrl.length);
+        const imageUrl = scaledCanvas.toDataURL('image/png');
+        console.log('[CameraScanner] Preprocessed image URL generated, size:', scaledWidth, 'x', scaledHeight);
 
         try {
           if (!isScanningRef.current) {
