@@ -8,12 +8,10 @@ const SHOW_DEBUG_THUMBNAIL = true;
 const ENABLE_EROSION = false;
 const ENABLE_MIN_OCR_CONFIDENCE_CHECK = false;
 const MIN_OCR_CONFIDENCE = 0;
-const MIN_WORD_CONFIDENCE = 70; // TODO: tune based on testing
 const REQUIRED_CONSECUTIVE_MATCHES = 2;
 const RESTART_SCAN_DELAY = 1500;
 const PSM_MODE = PSM.SINGLE_LINE; // Alternative: PSM.SPARSE_TEXT
-const MAX_SET_CODE_EDIT_DISTANCE = 1;
-const KNOWN_SET_CODES = ['VEN']; // TODO: populate with full list of valid set codes
+const KNOWN_SET_CODES = ['OGN', 'SFD', 'UNL', 'VEN'];
 
 // Diagnostic flags for isolating OCR failures
 const INVERT_BINARIZED_OUTPUT = false;
@@ -72,36 +70,6 @@ function mapDisplayRectToVideoRect(
     width: Math.floor(displayWidthRatio * renderedWidth),
     height: Math.floor(displayHeightRatio * renderedHeight),
   };
-}
-
-/**
- * Compute Levenshtein distance between two strings.
- * Used for fuzzy matching of set codes.
- */
-function levenshteinDistance(a: string, b: string): number {
-  const m = a.length;
-  const n = b.length;
-  
-  // Create a matrix of size (m+1) x (n+1)
-  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-  
-  // Initialize base cases
-  for (let i = 0; i <= m; i++) dp[i][0] = i;
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
-  
-  // Fill the matrix
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      dp[i][j] = Math.min(
-        dp[i - 1][j] + 1,      // deletion
-        dp[i][j - 1] + 1,      // insertion
-        dp[i - 1][j - 1] + cost // substitution
-      );
-    }
-  }
-  
-  return dp[m][n];
 }
 
 /**
@@ -252,17 +220,6 @@ function computeOtsuThreshold(grayscaleData: Uint8ClampedArray): number {
   }
 
   return threshold;
-}
-
-function filterOCRWordsByConfidence(words: Tesseract.Word[], minConfidence: number): string {
-  if (!words || words.length === 0) return '';
-
-  const highConfidenceWords = words
-    .filter(word => word.confidence >= minConfidence)
-    .map(word => word.text.trim())
-    .filter(text => text.length > 0);
-
-  return highConfidenceWords.join(' ');
 }
 
 interface CameraScannerProps {
@@ -770,24 +727,12 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             wordCount,
           });
 
-          // Filter to only high-confidence words to eliminate edge artifacts
-          const ocrWords = ((result.data as any).words ?? []) as Tesseract.Word[];
-          const filteredText = filterOCRWordsByConfidence(ocrWords, MIN_WORD_CONFIDENCE);
-          const filteredWords = filteredText.split(/\s+/).filter(word => word.length > 0);
-
-          console.log('[OCR FILTERED]', {
-            raw: JSON.stringify(result.data.text),
-            filtered: JSON.stringify(filteredText),
-            wordsKept: filteredWords.length,
-            wordsRemoved: wordCount - filteredWords.length,
-          });
-
           // Push formatted entry to on-screen debug log (only if thumbnail is shown)
           if (SHOW_DEBUG_THUMBNAIL) {
-            const rawPreview = result.data.text.trim().replace(/\s+/g, ' ').slice(0, 30);
-            const filteredPreview = filteredText.trim().replace(/\s+/g, ' ').slice(0, 30);
-            const summary = `Raw: "${rawPreview}" → Filtered: "${filteredPreview}"`;
-            setOcrDebugLog(prev => [summary, ...prev].slice(0, MAX_DEBUG_LOG_LINES));
+            const preview = result.data.text.trim().replace(/\s+/g, ' ').slice(0, 50);
+            const setCodeMatch = preview.match(new RegExp(`(${KNOWN_SET_CODES.join('|')})`, 'i'));
+            const status = setCodeMatch ? `✓ Set found: ${setCodeMatch[1]}` : `Raw: "${preview}"`;
+            setOcrDebugLog(prev => [status, ...prev].slice(0, MAX_DEBUG_LOG_LINES));
           }
 
           // Release the processing lock
@@ -800,8 +745,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             return;
           }
 
-          // Use filtered text for card ID extraction
-          const text = filteredText;
+          const text = result.data.text;
           const confidence = result.data.confidence;
           if (DEBUG) console.log('[CameraScanner] OCR Result text:', JSON.stringify(text));
           if (DEBUG) console.log('[CameraScanner] OCR Result confidence:', confidence);
@@ -818,75 +762,24 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             return;
           }
 
-          // Extract card ID using regex patterns
-          // Applied to FILTERED text (low-confidence words removed), so artifacts/garbage on edges are gone
-          // Try patterns in order: bullet format first, then dash format, then fuzzy matching
-          // 1. "SFD • 100/1xx" (actual card format with bullet and set size)
-          // 2. "SFD-100" (API format)
-          // 3. "SFD-100-298" (API format with set size)
-          
+          // Build a regex that matches ONLY known set codes followed by card numbers
+          // Pattern: SET_CODE • NUMBER/TOTAL (e.g. "VEN • 153/221" or "SFD-100-298")
+          const setCodePattern = KNOWN_SET_CODES.join('|');
+          const strictPattern = new RegExp(
+            `\\b(${setCodePattern})\\s*[-•·.\\s]+\\s*(\\d{1,4})\\s*(?:[/-•·]\\s*\\d{1,4})?\\b`,
+            'i'
+          );
+
+          const match = text.match(strictPattern);
           let cardId: string | null = null;
-          let matchMethod: string | null = null;
-          
-          // Try strict regex patterns FIRST
-          // Try to match "SET • NUMBER/TOTAL" format first
-          const bulletPattern = /\b([A-Z]{2,5})\s*[•·]\s*(\d{1,4})(?:\/\d{1,4})?\b/i;
-          const bulletMatch = text.match(bulletPattern);
-          
-          if (bulletMatch) {
-            // Convert "SFD • 100/1xx" to "SFD-100"
-            const setCode = bulletMatch[1].toUpperCase();
-            const cardNumber = bulletMatch[2];
+
+          if (match) {
+            const setCode = match[1].toUpperCase();
+            const cardNumber = match[2];
             cardId = `${setCode}-${cardNumber}`;
-            matchMethod = 'strict-bullet';
-            if (DEBUG) console.log('[CameraScanner] Matched bullet pattern:', cardId);
+            console.log('[CameraScanner] Matched known set code:', cardId, 'from:', JSON.stringify(text));
           } else {
-            // Try standard dash format
-            const dashPattern = /\b([A-Z]{2,5}-\d{2,4}(?:-\d{2,4})?)\b/i;
-            const dashMatch = text.match(dashPattern);
-            
-            if (dashMatch) {
-              cardId = dashMatch[1].toUpperCase();
-              matchMethod = 'strict-dash';
-              if (DEBUG) console.log('[CameraScanner] Matched dash pattern:', cardId);
-            }
-          }
-          
-          // Fallback to fuzzy matching if strict patterns failed
-          if (!cardId) {
-            if (DEBUG) console.log('[CameraScanner] Strict patterns failed, attempting fuzzy matching');
-            
-            // Extract candidate alphabetic tokens (2-5 uppercase letters)
-            const alphaTokenPattern = /\b([A-Z]{2,5})\b/gi;
-            const numberTokenPattern = /\b(\d{1,4})\b/gi;
-            
-            const alphaMatches = [...text.matchAll(alphaTokenPattern)];
-            const numberMatches = [...text.matchAll(numberTokenPattern)];
-            
-            // Find best set code match via Levenshtein distance
-            let bestSetCode: string | null = null;
-            let bestDistance = MAX_SET_CODE_EDIT_DISTANCE + 1;
-            
-            for (const match of alphaMatches) {
-              const token = match[1].toUpperCase();
-              for (const knownCode of KNOWN_SET_CODES) {
-                const dist = levenshteinDistance(token, knownCode);
-                if (dist <= MAX_SET_CODE_EDIT_DISTANCE && dist < bestDistance) {
-                  bestDistance = dist;
-                  bestSetCode = knownCode;
-                }
-              }
-            }
-            
-            // If we found a plausible set code and there's a nearby number, construct cardId
-            if (bestSetCode && numberMatches.length > 0) {
-              const cardNumber = numberMatches[0][1];
-              cardId = `${bestSetCode}-${cardNumber}`;
-              matchMethod = 'fuzzy';
-              if (DEBUG) console.log('[CameraScanner] Fuzzy matched set code:', bestSetCode, 'with number:', cardNumber);
-            } else if (!bestSetCode) {
-              if (DEBUG) console.log('[CameraScanner] No pattern matched in text:', JSON.stringify(text));
-            }
+            console.log('[CameraScanner] No match against known set codes in:', JSON.stringify(text));
           }
 
           if (cardId) {
