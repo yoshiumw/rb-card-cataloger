@@ -15,6 +15,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
   const [scanningStatus, setScanningStatus] = useState('Initializing OCR engine...');
   const [showInstructions, setShowInstructions] = useState(false);
   const streamRef = useRef<MediaStream | null>(null);
+  const isScanningRef = useRef(false);
 
   useEffect(() => {
     let mounted = true;
@@ -125,7 +126,9 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
   }, []);
 
   const stopCamera = () => {
+    console.log('[CameraScanner] stopCamera called');
     setIsScanning(false);
+    isScanningRef.current = false;
     
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => {
@@ -141,25 +144,28 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
 
   const startScanning = () => {
     console.log('[CameraScanner] startScanning called');
-    // Set scanning flag immediately and start the scan loop
+    // Set both state and ref immediately to avoid timing issues
     setIsScanning(true);
-    // Use requestAnimationFrame or small delay to ensure state propagates
+    isScanningRef.current = true;
+    console.log('[CameraScanner] isScanning set to true (state and ref)');
+    
+    // Start the scan loop with minimal delay
     setTimeout(() => {
       console.log('[CameraScanner] Starting first scan frame');
       scanFrame();
-    }, 100);
+    }, 50);
   };
 
   const scanFrame = async () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     
-    // Check if we should continue scanning (use ref for immediate value)
-    const shouldScan = isScanning;
-    console.log('[CameraScanner] scanFrame started, video readyState:', video?.readyState, 'isScanning:', shouldScan);
+    // Check if we should continue scanning using the ref for immediate value
+    const shouldScan = isScanningRef.current;
+    console.log('[CameraScanner] scanFrame started, video readyState:', video?.readyState, 'isScanning (ref):', shouldScan);
     
     if (!shouldScan) {
-      console.log('[CameraScanner] scanFrame aborted: scanning was stopped');
+      console.log('[CameraScanner] scanFrame aborted: scanning was stopped (ref check)');
       return;
     }
     
@@ -167,7 +173,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
     if (!video || !canvas || video.readyState < 2) {
       // Video not ready yet, try again
       console.log('[CameraScanner] Video not ready (readyState:', video?.readyState, '), retrying in 100ms');
-      if (isScanning) {
+      if (isScanningRef.current) {
         setTimeout(scanFrame, 100);
       }
       return;
@@ -233,8 +239,8 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
         console.log('[CameraScanner] Image URL generated, length:', imageUrl.length);
 
         try {
-          if (!isScanning) {
-            console.log('[CameraScanner] Aborting before OCR: isScanning is false');
+          if (!isScanningRef.current) {
+            console.log('[CameraScanner] Aborting before OCR: isScanning (ref) is false');
             return;
           }
           
@@ -246,13 +252,13 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           const worker = await Tesseract.createWorker('eng', 2, {
             logger: (m) => {
               console.log('[Tesseract Logger]', m.status, m.progress ? `(${Math.round(m.progress * 100)}%)` : '');
-              if (m.status === 'recognizing text' && isScanning) {
+              if (m.status === 'recognizing text' && isScanningRef.current) {
                 setScanningStatus(`Recognizing... ${Math.round(m.progress * 100)}%`);
-              } else if (m.status === 'initializing tesseract' && isScanning) {
+              } else if (m.status === 'initializing tesseract' && isScanningRef.current) {
                 setScanningStatus('Initializing OCR engine...');
-              } else if (m.status === 'loading tesseract core' && isScanning) {
+              } else if (m.status === 'loading tesseract core' && isScanningRef.current) {
                 setScanningStatus('Loading OCR core...');
-              } else if (m.status === 'initialized tesseract' && isScanning) {
+              } else if (m.status === 'initialized tesseract' && isScanningRef.current) {
                 setScanningStatus('OCR initialized, processing...');
               }
             }
@@ -268,8 +274,8 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           
           console.log('[CameraScanner] Tesseract recognition completed');
 
-          if (!isScanning) {
-            console.log('[CameraScanner] Aborting after OCR: isScanning is false');
+          if (!isScanningRef.current) {
+            console.log('[CameraScanner] Aborting after OCR: isScanning (ref) is false');
             return;
           }
 
@@ -324,7 +330,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           }
 
           // Show what OCR detected for debugging
-          if (isScanning) {
+          if (isScanningRef.current) {
             const previewText = text.trim().substring(0, 60).replace(/\s+/g, ' ');
             console.log('[CameraScanner] OCR detected (no valid format):', previewText);
             
@@ -337,22 +343,22 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           }
         } catch (err) {
           console.error('[CameraScanner] OCR error:', err);
-          if (isScanning) {
+          if (isScanningRef.current) {
             setScanningStatus('Processing error. Retrying...');
           }
         }
       }
 
       // Continue scanning if still active
-      if (isScanning) {
+      if (isScanningRef.current) {
         console.log('[CameraScanner] Scheduling next scan in 800ms');
         setTimeout(scanFrame, 800); // Scan every 0.8 seconds for faster feedback
       } else {
-        console.log('[CameraScanner] Not scheduling next scan: isScanning is false');
+        console.log('[CameraScanner] Not scheduling next scan: isScanning (ref) is false');
       }
     } catch (err) {
       console.error('[CameraScanner] Error in scanFrame:', err);
-      if (isScanning) {
+      if (isScanningRef.current) {
         setScanningStatus('Scanning error. Retrying...');
         setTimeout(scanFrame, 1500);
       }
