@@ -21,11 +21,15 @@ const BYPASS_PREPROCESSING = true;
 // Small box sized for a single short text line (e.g. "VEN • 101/166 • EN")
 // Width is generous (positioning slack); height is tight (maximizes character pixel size)
 // These are used ONLY for initial CSS sizing of the overlay - actual crop coords come from getBoundingClientRect()
-const TEXT_BOX_WIDTH_RATIO = 0.55;   // fraction of frame width
-const TEXT_BOX_HEIGHT_RATIO = 0.06;  // fraction of frame height
+const TEXT_BOX_WIDTH_RATIO = 0.75;   // Increased from 0.55 — more horizontal margin
+const TEXT_BOX_HEIGHT_RATIO = 0.12;  // Increased from 0.06 — 2x taller to tolerate vertical sway
 
 // Alignment check threshold
 const MIN_DARK_PIXEL_RATIO = 0.05; // minimum fraction of dark pixels to proceed with OCR
+
+// Crop smoothing configuration
+const CROP_SMOOTHING_ENABLED = true;  // Set to false to disable smoothing for testing
+const CROP_SMOOTHING_FRAMES = 5;  // Average crop position over last 5 frames
 
 /**
  * Converts a bounding box expressed as fractions of the displayed video element
@@ -97,6 +101,29 @@ function levenshteinDistance(a: string, b: string): number {
   }
   
   return dp[m][n];
+}
+
+/**
+ * Smooth crop position over multiple frames to dampen hand jitter.
+ * Uses a moving average of the last N frames to stabilize the crop region.
+ */
+function smoothCropPosition(
+  currentRect: { x: number; y: number; width: number; height: number },
+  historyRef: React.MutableRefObject<Array<{ x: number; y: number; width: number; height: number }>>,
+  maxHistoryLength: number
+): { x: number; y: number; width: number; height: number } {
+  historyRef.current.push(currentRect);
+  if (historyRef.current.length > maxHistoryLength) {
+    historyRef.current.shift();
+  }
+
+  const length = historyRef.current.length;
+  const avgX = Math.floor(historyRef.current.reduce((sum, r) => sum + r.x, 0) / length);
+  const avgY = Math.floor(historyRef.current.reduce((sum, r) => sum + r.y, 0) / length);
+  const avgWidth = Math.floor(historyRef.current.reduce((sum, r) => sum + r.width, 0) / length);
+  const avgHeight = Math.floor(historyRef.current.reduce((sum, r) => sum + r.height, 0) / length);
+
+  return { x: avgX, y: avgY, width: avgWidth, height: avgHeight };
 }
 
 /**
@@ -248,6 +275,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
   const MAX_DEBUG_LOG_LINES = 6;
   const streamRef = useRef<MediaStream | null>(null);
   const isScanningRef = useRef(false);
+  const cropHistoryRef = useRef<Array<{ x: number; y: number; width: number; height: number }>>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -394,6 +422,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
     console.log('[CameraScanner] stopCamera called');
     setIsScanning(false);
     isScanningRef.current = false;
+    cropHistoryRef.current = [];  // Reset smoothing history
     
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => {
@@ -509,10 +538,15 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
         videoRect.height
       );
 
-      const cropX = cropRegion.x;
-      const cropY = cropRegion.y;
-      const cropWidth = cropRegion.width;
-      const cropHeight = cropRegion.height;
+      // Smooth crop position over multiple frames to dampen hand jitter
+      const rectToUse = CROP_SMOOTHING_ENABLED 
+        ? smoothCropPosition(cropRegion, cropHistoryRef, CROP_SMOOTHING_FRAMES)
+        : cropRegion;
+
+      const cropX = rectToUse.x;
+      const cropY = rectToUse.y;
+      const cropWidth = rectToUse.width;
+      const cropHeight = rectToUse.height;
 
       if (DEBUG) console.log('[CameraScanner] Video rect:', videoRect.width, 'x', videoRect.height, 
         'Canvas:', canvas.width, 'x', canvas.height,
