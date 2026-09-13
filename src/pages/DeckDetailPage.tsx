@@ -8,6 +8,7 @@ import { validateDecklist } from '../services/decklistParser';
 import { getCardByName, isCardCached, getCachedCards } from '../services/cardLookupService';
 import { useAuth } from '../contexts/AuthContext';
 import { Deck, ParsedDecklist, SectionCompletion, DeckSectionKey, CollectionEntry } from '../types';
+import { usePriceData } from '../hooks/usePriceData';
 
 export default function DeckDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -345,7 +346,15 @@ function SectionStatCard({ title, completion, color }: { title: string; completi
 }
 
 function SectionDetail({ section }: { section: SectionCompletion }) {
+  const { getPriceByCardNumber, loading } = usePriceData();
   const [expanded, setExpanded] = useState(section.totalMissing > 0);
+
+  // Calculate section total price
+  const sectionTotal = section.cards.reduce((sum, card) => {
+    if (!card.cardId) return sum;
+    const price = getPriceByCardNumber(card.cardId);
+    return sum + (price?.marketPrice ?? 0) * card.required;
+  }, 0);
 
   return (
     <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
@@ -369,7 +378,12 @@ function SectionDetail({ section }: { section: SectionCompletion }) {
             </span>
           )}
         </div>
-        <span className="text-sm font-medium text-gray-400">{section.percentage}%</span>
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-medium text-gray-400">{section.percentage}%</span>
+          <span className="text-sm font-medium text-green-400 min-w-[60px] text-right">
+            {loading ? '...' : `$${sectionTotal.toFixed(2)}`}
+          </span>
+        </div>
       </button>
 
       {expanded && (
@@ -381,40 +395,60 @@ function SectionDetail({ section }: { section: SectionCompletion }) {
                 <th className="text-center px-3 py-2">Required</th>
                 <th className="text-center px-3 py-2">Owned</th>
                 <th className="text-center px-3 py-2">Missing</th>
+                <th className="text-center px-3 py-2">Price</th>
                 <th className="text-center px-3 py-2">Status</th>
               </tr>
             </thead>
             <tbody>
-              {section.cards.map((card, i) => (
-                <tr key={i} className="border-b border-gray-700/50 last:border-0">
-                  <td className="px-4 py-2.5 text-sm text-white">
-                    {card.cardName}
-                    {card.cardId && (
-                      <span className="ml-2 text-xs text-gray-500 font-mono">{card.cardId}</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2.5 text-sm text-center text-gray-300">{card.required}</td>
-                  <td className="px-3 py-2.5 text-sm text-center text-gray-300">{card.owned}</td>
-                  <td className="px-3 py-2.5 text-sm text-center">
-                    {card.missing > 0 ? (
-                      <span className="text-red-400 font-medium">{card.missing}</span>
-                    ) : (
-                      <span className="text-gray-500">0</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2.5 text-center">
-                    {card.status === 'complete' && (
-                      <Check size={16} className="inline text-green-400" />
-                    )}
-                    {card.status === 'partial' && (
-                      <AlertTriangle size={16} className="inline text-yellow-400" />
-                    )}
-                    {card.status === 'missing' && (
-                      <X size={16} className="inline text-red-400" />
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {section.cards.map((card, i) => {
+                const price = card.cardId ? getPriceByCardNumber(card.cardId) : undefined;
+                const lineTotal = (price?.marketPrice ?? 0) * card.required;
+                
+                return (
+                  <tr key={i} className="border-b border-gray-700/50 last:border-0">
+                    <td className="px-4 py-2.5 text-sm text-white">
+                      {card.cardName}
+                      {card.cardId && (
+                        <span className="ml-2 text-xs text-gray-500 font-mono">{card.cardId}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-sm text-center text-gray-300">{card.required}</td>
+                    <td className="px-3 py-2.5 text-sm text-center text-gray-300">{card.owned}</td>
+                    <td className="px-3 py-2.5 text-sm text-center">
+                      {card.missing > 0 ? (
+                        <span className="text-red-400 font-medium">{card.missing}</span>
+                      ) : (
+                        <span className="text-gray-500">0</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-sm text-center text-gray-300">
+                      {price?.marketPrice != null ? (
+                        <span className="text-green-400">
+                          ${price.marketPrice.toFixed(2)}
+                          {card.required > 1 && (
+                            <span className="text-xs text-gray-500 ml-1">×{card.required}=${lineTotal.toFixed(2)}</span>
+                          )}
+                        </span>
+                      ) : loading ? (
+                        <span className="text-gray-500 animate-pulse">...</span>
+                      ) : (
+                        <span className="text-gray-600">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-center">
+                      {card.status === 'complete' && (
+                        <Check size={16} className="inline text-green-400" />
+                      )}
+                      {card.status === 'partial' && (
+                        <AlertTriangle size={16} className="inline text-yellow-400" />
+                      )}
+                      {card.status === 'missing' && (
+                        <X size={16} className="inline text-red-400" />
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

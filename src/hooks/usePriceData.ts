@@ -1,0 +1,78 @@
+import { useEffect, useState } from 'react';
+import { ref, onValue } from 'firebase/database';
+import { realtimeDb } from '../firebase/config';
+
+export interface CardPrice {
+  productId: string;
+  name: string;
+  cleanName: string;
+  lowPrice: number | null;
+  midPrice: number | null;
+  highPrice: number | null;
+  marketPrice: number | null;
+  extNumber: string;
+}
+
+/**
+ * Normalize card number for matching.
+ * Handles formats like:
+ * - "101/298" -> "101"
+ * - "VEN-101" -> "101"
+ * - "SFD-153/221" -> "153"
+ */
+export function normalizeCardNumber(raw: string): string {
+  // First, extract just the number part before any "/" (removes "/298" suffix)
+  const withoutTotal = raw.split('/')[0].trim();
+  // Then remove any set prefix like "VEN-" or "SFD-"
+  const withoutPrefix = withoutTotal.replace(/^[A-Z]+-/i, '').trim();
+  return withoutPrefix;
+}
+
+export function usePriceData() {
+  const [prices, setPrices] = useState<Record<string, CardPrice>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!realtimeDb) {
+      console.warn('[usePriceData] Firebase Realtime Database not configured');
+      setLoading(false);
+      return;
+    }
+
+    const pricesRef = ref(realtimeDb, 'riftbound_prices_tcgcsv');
+    const unsubscribe = onValue(
+      pricesRef,
+      (snapshot) => {
+        const data = snapshot.val() || {};
+        setPrices(data);
+        setLoading(false);
+        setError(null);
+      },
+      (err) => {
+        console.error('[usePriceData] Error fetching prices:', err);
+        setError(err.message);
+        setLoading(false);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
+
+  // Look up a card by its extNumber (set code + card number, e.g. "VEN-101")
+  // This uses normalized matching to handle different ID formats
+  const getPriceByCardNumber = (extNumber: string): CardPrice | undefined => {
+    const normalizedTarget = normalizeCardNumber(extNumber);
+    
+    return Object.values(prices).find((p) => {
+      const normalizedPrice = normalizeCardNumber(p.extNumber);
+      return normalizedPrice === normalizedTarget;
+    });
+  };
+
+  // Direct lookup by exact extNumber (for when formats already match)
+  const getPriceByExactId = (extNumber: string): CardPrice | undefined => {
+    return prices[extNumber];
+  };
+
+  return { prices, getPriceByCardNumber, getPriceByExactId, loading, error };
+}
