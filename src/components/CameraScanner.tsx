@@ -3,7 +3,7 @@ import { Camera, X, Loader2, ChevronUp, ChevronDown } from 'lucide-react';
 import Tesseract, { PSM } from 'tesseract.js';
 
 // Configuration constants
-const DEBUG = false;
+const DEBUG = true;
 const ENABLE_EROSION = false;
 const MIN_OCR_CONFIDENCE = 60;
 const REQUIRED_CONSECUTIVE_MATCHES = 2;
@@ -793,6 +793,24 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             
             {/* Scanning overlay - higher z-index to stay on top */}
             <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
+              {/* Debug: show what Tesseract actually receives */}
+              {DEBUG && imageUrl && (
+                <img
+                  src={imageUrl}
+                  alt="OCR input preview"
+                  style={{
+                    position: 'fixed',
+                    top: 0,
+                    right: 0,
+                    width: 300,
+                    maxHeight: '200px',
+                    zIndex: 9999,
+                    border: '3px solid red',
+                    backgroundColor: '#fff',
+                  }}
+                />
+              )}
+              
               {/* L-shaped corner guide in bottom-left */}
               <div
                 className="absolute bottom-8 left-4 pointer-events-none"
