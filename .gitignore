@@ -1,52 +1,47 @@
 ```
-# Dependencies
-node_modules/
-
-# Build artifacts
-dist/
-build/
-target/
-
-# Environment
-.env
-.env.local
-.env.*
-
-# Logs
-*.log
-
-# Python
-__pycache__/
+# Compiled and build artifacts
 *.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
-.venv/
-.ENV
-.venv.bak/
-pip-log.txt
-pip-selfcheck.json
-
-# Compiled files
-*.class
+__pycache__/
 *.o
 *.obj
+dist/
+build/
+*.class
 *.exe
 *.dll
 *.so
 *.a
 *.out
 
-# Editor/IDE
+# Dependencies
+.venv/
+venv/
+node_modules/
+target/
+.gradle/
+.mypy_cache/
+.pytest_cache/
+julia-*/
+zig*/
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+.env.*
+
+# Editors
 .vscode/
 .idea/
 *.swp
 *.swo
-*.tmp
 
-# System
+# System files
 .DS_Store
 Thumbs.db
 
@@ -54,12 +49,6 @@ Thumbs.db
 coverage/
 htmlcov/
 .coverage
-
-# MyPy
-.mypy_cache/
-
-# PyTest
-.pytest_cache/
 
 # Compressed files
 *.zip
