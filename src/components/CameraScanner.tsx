@@ -141,26 +141,27 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
 
   const startScanning = () => {
     console.log('[CameraScanner] startScanning called');
-    // Delay start to ensure video is fully ready (especially for iOS)
+    // Set scanning flag immediately and start the scan loop
+    setIsScanning(true);
+    // Use requestAnimationFrame or small delay to ensure state propagates
     setTimeout(() => {
-      console.log('[CameraScanner] Setting isScanning to true and starting first scan');
-      setIsScanning(true);
+      console.log('[CameraScanner] Starting first scan frame');
       scanFrame();
-    }, 500);
+    }, 100);
   };
 
   const scanFrame = async () => {
-    // Check if we should continue scanning
-    if (!isScanning) {
-      console.log('[CameraScanner] scanFrame aborted: isScanning is false');
-      return;
-    }
-    
     const video = videoRef.current;
     const canvas = canvasRef.current;
     
-    console.log('[CameraScanner] scanFrame started, video readyState:', video?.readyState);
-    console.log('[CameraScanner] isScanning value:', isScanning);
+    // Check if we should continue scanning (use ref for immediate value)
+    const shouldScan = isScanning;
+    console.log('[CameraScanner] scanFrame started, video readyState:', video?.readyState, 'isScanning:', shouldScan);
+    
+    if (!shouldScan) {
+      console.log('[CameraScanner] scanFrame aborted: scanning was stopped');
+      return;
+    }
     
     // Ensure video and canvas are ready
     if (!video || !canvas || video.readyState < 2) {
