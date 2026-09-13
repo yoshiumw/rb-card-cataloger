@@ -45,26 +45,57 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
         streamRef.current = stream;
         
         if (videoRef.current) {
-          videoRef.current.srcObject = stream;
+          const video = videoRef.current;
+          video.srcObject = stream;
           console.log('[CameraScanner] Video srcObject set');
+          console.log('[CameraScanner] Video readyState before play:', video.readyState);
           
           // iOS Safari requires explicit play() call
           try {
-            await videoRef.current.play();
+            await video.play();
             console.log('[CameraScanner] Video playback started');
+            console.log('[CameraScanner] Video readyState after play:', video.readyState);
           } catch (playErr) {
             console.error('[CameraScanner] Error playing video:', playErr);
           }
           
-          // Start scanning after video is loaded
-          videoRef.current.onloadedmetadata = () => {
-            console.log('[CameraScanner] Video metadata loaded');
-            if (mounted) {
-              startScanning();
-            } else {
-              console.log('[CameraScanner] Component unmounted before starting scan');
+          // Track if we've already started scanning to avoid duplicates
+          let scanStarted = false;
+          const tryStartScanning = () => {
+            if (scanStarted || !mounted) {
+              console.log('[CameraScanner] Skipping duplicate startScanning call, scanStarted:', scanStarted, 'mounted:', mounted);
+              return;
             }
+            scanStarted = true;
+            console.log('[CameraScanner] Video ready, starting scanning (readyState:', video.readyState, ')');
+            startScanning();
           };
+          
+          // Multiple fallback methods to ensure scanning starts
+          // Method 1: onloadedmetadata
+          video.onloadedmetadata = () => {
+            console.log('[CameraScanner] Video metadata loaded event fired');
+            tryStartScanning();
+          };
+          
+          // Method 2: onloadeddata - fires when first frame data is loaded
+          video.onloadeddata = () => {
+            console.log('[CameraScanner] Video loadeddata event fired');
+            tryStartScanning();
+          };
+          
+          // Method 3: oncanplay - fires when enough data is loaded to start playing
+          video.oncanplay = () => {
+            console.log('[CameraScanner] Video canplay event fired');
+            tryStartScanning();
+          };
+          
+          // Method 4: Fallback timeout - if events don't fire, start anyway after 2 seconds
+          console.log('[CameraScanner] Setting 2s fallback timeout to start scanning');
+          setTimeout(() => {
+            console.log('[CameraScanner] Fallback timeout reached, readyState:', video.readyState);
+            tryStartScanning();
+          }, 2000);
         }
       } catch (err) {
         if (!mounted) return;
@@ -129,16 +160,19 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
     const canvas = canvasRef.current;
     
     console.log('[CameraScanner] scanFrame started, video readyState:', video?.readyState);
+    console.log('[CameraScanner] isScanning value:', isScanning);
     
     // Ensure video and canvas are ready
     if (!video || !canvas || video.readyState < 2) {
       // Video not ready yet, try again
-      console.log('[CameraScanner] Video not ready, retrying in 100ms');
+      console.log('[CameraScanner] Video not ready (readyState:', video?.readyState, '), retrying in 100ms');
       if (isScanning) {
         setTimeout(scanFrame, 100);
       }
       return;
     }
+    
+    console.log('[CameraScanner] Video is ready, proceeding with OCR');
 
     const context = canvas.getContext('2d');
     if (!context) {
@@ -204,10 +238,11 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           }
           
           console.log('[CameraScanner] Starting Tesseract recognition...');
-          setScanningStatus('Processing image...');
+          console.log('[CameraScanner] Tesseract worker initializing with image size:', cropWidth, 'x', cropHeight);
+          setScanningStatus('Loading OCR engine...');
           
           // Use Tesseract to recognize text with enhanced configuration for better accuracy
-          const result = await Tesseract.recognize(imageUrl, 'eng', {
+          const worker = await Tesseract.createWorker('eng', 2, {
             logger: (m) => {
               console.log('[Tesseract Logger]', m.status, m.progress ? `(${Math.round(m.progress * 100)}%)` : '');
               if (m.status === 'recognizing text' && isScanning) {
@@ -219,10 +254,16 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
               } else if (m.status === 'initialized tesseract' && isScanning) {
                 setScanningStatus('OCR initialized, processing...');
               }
-            },
+            }
+          });
+          
+          await worker.setParameters({
             tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-•·/',
             preserve_interword_spaces: '1'
           });
+          
+          const result = await worker.recognize(imageUrl);
+          await worker.terminate();
           
           console.log('[CameraScanner] Tesseract recognition completed');
 

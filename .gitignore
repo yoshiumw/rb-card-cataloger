@@ -8,7 +8,10 @@ build/
 *.js.map
 *.ts.map
 
-# Environment variables
+# Logs
+*.log
+
+# Environment
 .env
 .env.local
 *.env.*
@@ -19,14 +22,6 @@ build/
 *.swp
 *.swo
 
-# Logs
-*.log
-
-# Coverage
-coverage/
-htmlcov/
-*.coverage
-
 # Python
 __pycache__/
 *.pyc
@@ -34,8 +29,11 @@ __pycache__/
 *.pyd
 .Python
 *.so
-*.egg-info/
-.eggs/
+.coverage
+htmlcov/
+.coverage.*
+.pytest_cache/
+.mypy_cache/
 
 # Temporary files
 *.tmp
@@ -44,21 +42,25 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Testing
-.pytest_cache/
-.mypy_cache/
-.nyc_output/
-coverage/
-
-# Compiled JavaScript
-lib/
-out/
-dist/
-build/
-
-# Lock files
-package-lock.json
-yarn.lock
+# Archives
+*.zip
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.gz
+*.rar
+*.7z
+*.bz2
+*.xz
+*.Z
+*.lz
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.zst
 
 # OS generated files
 .DS_Store
@@ -67,12 +69,5 @@ yarn.lock
 .Spotlight-V100
 .Trashes
 ehthumbs.db
-Icon?
 Thumbs.db
-```
-
-Wait, I need to reconsider this. Looking at the input again, only `src/components/CameraScanner.tsx` was modified. There are no build artifacts, dependencies, or temporary files in the change list. This appears to be just a source code modification.
-
-```gitignore
-
 ```
