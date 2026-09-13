@@ -6,11 +6,15 @@ import Tesseract, { PSM } from 'tesseract.js';
 const DEBUG = true;
 const SHOW_DEBUG_THUMBNAIL = true;
 const ENABLE_EROSION = false;
-const MIN_OCR_CONFIDENCE = 60;
+const MIN_OCR_CONFIDENCE = 0; // TODO: restore to 60 after diagnosing OCR issues
 const REQUIRED_CONSECUTIVE_MATCHES = 2;
 const PSM_MODE = PSM.SINGLE_LINE; // Alternative: PSM.SPARSE_TEXT
 const MAX_SET_CODE_EDIT_DISTANCE = 1;
 const KNOWN_SET_CODES = ['VEN']; // TODO: populate with full list of valid set codes
+
+// Diagnostic flags for isolating OCR failures
+const INVERT_BINARIZED_OUTPUT = false; // TODO: test true if OCR fails on visibly-clear text (white-on-dark polarity)
+const BYPASS_PREPROCESSING = false; // TODO: test true to send Tesseract the raw crop, no grayscale/threshold/scale
 
 // Small box sized for a single short text line (e.g. "VEN • 101/166 • EN")
 // Width is generous (positioning slack); height is tight (maximizes character pixel size)
@@ -236,6 +240,8 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
   const [error, setError] = useState<string | null>(null);
   const [scanningStatus, setScanningStatus] = useState('Initializing OCR engine...');
   const [debugImageUrl, setDebugImageUrl] = useState<string | null>(null);
+  const [ocrDebugLog, setOcrDebugLog] = useState<string[]>([]);
+  const MAX_DEBUG_LOG_LINES = 6;
   const streamRef = useRef<MediaStream | null>(null);
   const isScanningRef = useRef(false);
 
@@ -255,7 +261,8 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
         });
         
         await worker.setParameters({
-          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-•·/',
+          // Include • (U+2022), · (U+00B7), and also . , since OCR often misreads bullets as periods/commas
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-•·/,.',
           preserve_interword_spaces: '1',
           tessedit_pageseg_mode: PSM_MODE
         });
@@ -524,114 +531,161 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
         const imgCropWidth = imageData.width;
         const imgCropHeight = imageData.height;
         
-        // Step 1: Scale up 4x for maximum character detail (increased from 3x)
-        const scale = 4;
-        const scaledWidth = imgCropWidth * scale;
-        const scaledHeight = imgCropHeight * scale;
+        let imageUrl: string;
         
-        const scaledCanvas = document.createElement('canvas');
-        scaledCanvas.width = scaledWidth;
-        scaledCanvas.height = scaledHeight;
-        const scaledContext = scaledCanvas.getContext('2d');
-        
-        if (!scaledContext) return;
-        
-        // Draw with smoothing disabled for sharper edges
-        scaledContext.imageSmoothingEnabled = false;
-        scaledContext.drawImage(tempCanvas, 0, 0, scaledWidth, scaledHeight);
-        
-        // Step 2: Get pixels and apply preprocessing
-        const pixels = scaledContext.getImageData(0, 0, scaledWidth, scaledHeight);
-        const data = pixels.data;
-        
-        // Step 3: Convert to grayscale using luminance formula
-        for (let i = 0; i < data.length; i += 4) {
-          const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-          data[i] = gray;     // R
-          data[i + 1] = gray; // G
-          data[i + 2] = gray; // B
-        }
-        
-        // Step 4: Apply Sauvola's local adaptive thresholding
-        // Extract grayscale values (every 4th byte starting at index 0)
-        const grayscaleValues = new Uint8ClampedArray(scaledWidth * scaledHeight);
-        for (let i = 0; i < data.length; i += 4) {
-          grayscaleValues[i / 4] = data[i];
-        }
-        
-        const binaryResult = sauvolaThreshold(grayscaleValues, scaledWidth, scaledHeight);
-        if (DEBUG) console.log('[CameraScanner] Sauvola thresholding applied');
-        
-        // Apply binary result back to RGBA data
-        for (let i = 0; i < binaryResult.length; i++) {
-          const idx = i * 4;
-          const value = binaryResult[i];
-          data[idx] = value;
-          data[idx + 1] = value;
-          data[idx + 2] = value;
-        }
-        
-        // Step 5: Apply morphological erosion to remove small noise (optional)
-        if (ENABLE_EROSION) {
-          const erodedData = new Uint8ClampedArray(data);
-          const width = scaledWidth;
-          const height = scaledHeight;
+        // BYPASS_PREPROCESSING mode: skip all preprocessing and send raw crop directly to Tesseract
+        if (BYPASS_PREPROCESSING) {
+          // Scale up 2-3x with smoothing enabled for gentler upscale
+          const bypassScale = 3;
+          const bypassScaledWidth = imgCropWidth * bypassScale;
+          const bypassScaledHeight = imgCropHeight * bypassScale;
           
-          for (let y = 1; y < height - 1; y++) {
-            for (let x = 1; x < width - 1; x++) {
-              const idx = (y * width + x) * 4;
-              let minVal = 255;
-              
-              // Check 3x3 neighborhood
-              for (let dy = -1; dy <= 1; dy++) {
-                for (let dx = -1; dx <= 1; dx++) {
-                  const nIdx = ((y + dy) * width + (x + dx)) * 4;
-                  if (data[nIdx] < minVal) {
-                    minVal = data[nIdx];
+          const bypassCanvas = document.createElement('canvas');
+          bypassCanvas.width = bypassScaledWidth;
+          bypassCanvas.height = bypassScaledHeight;
+          const bypassContext = bypassCanvas.getContext('2d');
+          
+          if (!bypassContext) return;
+          
+          // Enable smoothing for gentler upscale
+          bypassContext.imageSmoothingEnabled = true;
+          bypassContext.imageSmoothingQuality = 'high';
+          bypassContext.drawImage(tempCanvas, 0, 0, bypassScaledWidth, bypassScaledHeight);
+          
+          // Convert to data URL for Tesseract
+          imageUrl = bypassCanvas.toDataURL('image/png');
+          
+          // Update debug thumbnail state
+          if (SHOW_DEBUG_THUMBNAIL) {
+            setDebugImageUrl(imageUrl);
+          }
+          
+          if (DEBUG) console.log('[CameraScanner] BYPASS_PREPROCESSING=true: sending raw crop to Tesseract');
+          
+          // Skip alignment check in bypass mode (no grayscaleValues available)
+        } else {
+          // Standard preprocessing pipeline (grayscale + Sauvola + optional erosion)
+        
+          // Step 1: Scale up 4x for maximum character detail (increased from 3x)
+          const scale = 4;
+          const scaledWidth = imgCropWidth * scale;
+          const scaledHeight = imgCropHeight * scale;
+          
+          const scaledCanvas = document.createElement('canvas');
+          scaledCanvas.width = scaledWidth;
+          scaledCanvas.height = scaledHeight;
+          const scaledContext = scaledCanvas.getContext('2d');
+          
+          if (!scaledContext) return;
+          
+          // Draw with smoothing disabled for sharper edges
+          scaledContext.imageSmoothingEnabled = false;
+          scaledContext.drawImage(tempCanvas, 0, 0, scaledWidth, scaledHeight);
+          
+          // Step 2: Get pixels and apply preprocessing
+          const pixels = scaledContext.getImageData(0, 0, scaledWidth, scaledHeight);
+          const data = pixels.data;
+          
+          // Step 3: Convert to grayscale using luminance formula
+          for (let i = 0; i < data.length; i += 4) {
+            const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+            data[i] = gray;     // R
+            data[i + 1] = gray; // G
+            data[i + 2] = gray; // B
+          }
+          
+          // Step 4: Apply Sauvola's local adaptive thresholding
+          // Extract grayscale values (every 4th byte starting at index 0)
+          const grayscaleValues = new Uint8ClampedArray(scaledWidth * scaledHeight);
+          for (let i = 0; i < data.length; i += 4) {
+            grayscaleValues[i / 4] = data[i];
+          }
+          
+          const binaryResult = sauvolaThreshold(grayscaleValues, scaledWidth, scaledHeight);
+          if (DEBUG) console.log('[CameraScanner] Sauvola thresholding applied');
+          
+          // Apply binary result back to RGBA data
+          for (let i = 0; i < binaryResult.length; i++) {
+            const idx = i * 4;
+            const value = binaryResult[i];
+            data[idx] = value;
+            data[idx + 1] = value;
+            data[idx + 2] = value;
+          }
+          
+          // Polarity inversion pass (for white-on-dark text scenarios)
+          if (INVERT_BINARIZED_OUTPUT) {
+            for (let i = 0; i < data.length; i += 4) {
+              const inverted = 255 - data[i];
+              data[i] = inverted;
+              data[i + 1] = inverted;
+              data[i + 2] = inverted;
+            }
+            if (DEBUG) console.log('[CameraScanner] INVERT_BINARIZED_OUTPUT=true: polarity inverted');
+          }
+          
+          // Step 5: Apply morphological erosion to remove small noise (optional)
+          if (ENABLE_EROSION) {
+            const erodedData = new Uint8ClampedArray(data);
+            const width = scaledWidth;
+            const height = scaledHeight;
+            
+            for (let y = 1; y < height - 1; y++) {
+              for (let x = 1; x < width - 1; x++) {
+                const idx = (y * width + x) * 4;
+                let minVal = 255;
+                
+                // Check 3x3 neighborhood
+                for (let dy = -1; dy <= 1; dy++) {
+                  for (let dx = -1; dx <= 1; dx++) {
+                    const nIdx = ((y + dy) * width + (x + dx)) * 4;
+                    if (data[nIdx] < minVal) {
+                      minVal = data[nIdx];
+                    }
                   }
                 }
+                
+                erodedData[idx] = minVal;
+                erodedData[idx + 1] = minVal;
+                erodedData[idx + 2] = minVal;
               }
-              
-              erodedData[idx] = minVal;
-              erodedData[idx + 1] = minVal;
-              erodedData[idx + 2] = minVal;
+            }
+            
+            // Copy eroded data back
+            for (let i = 0; i < data.length; i++) {
+              data[i] = erodedData[i];
             }
           }
           
-          // Copy eroded data back
-          for (let i = 0; i < data.length; i++) {
-            data[i] = erodedData[i];
+          scaledContext.putImageData(pixels, 0, 0);
+          
+          // Convert to data URL for Tesseract
+          imageUrl = scaledCanvas.toDataURL('image/png');
+          
+          // Update debug thumbnail state
+          if (SHOW_DEBUG_THUMBNAIL) {
+            setDebugImageUrl(imageUrl);
           }
-        }
-        
-        scaledContext.putImageData(pixels, 0, 0);
-        
-        // Convert to data URL for Tesseract
-        const imageUrl = scaledCanvas.toDataURL('image/png');
-        
-        // Update debug thumbnail state
-        if (SHOW_DEBUG_THUMBNAIL) {
-          setDebugImageUrl(imageUrl);
-        }
-        
-        if (DEBUG) console.log('[CameraScanner] Preprocessed image URL generated, size:', scaledWidth, 'x', scaledHeight);
-
-        // Alignment check: skip OCR if not enough dark pixels in the crop region
-        // This avoids wasting CPU/battery on frames where the card isn't aligned yet
-        let darkPixelCount = 0;
-        for (let i = 0; i < grayscaleValues.length; i++) {
-          if (grayscaleValues[i] < 100) darkPixelCount++;
-        }
-        const darkPixelRatio = darkPixelCount / grayscaleValues.length;
-        if (darkPixelRatio < MIN_DARK_PIXEL_RATIO) {
-          if (DEBUG) console.log('[CameraScanner] Skipping OCR: insufficient dark pixels (ratio:', darkPixelRatio.toFixed(3), ')');
-          setScanningStatus('Align the card corner with the guide');
-          if (isScanningRef.current) {
-            setTimeout(scanFrame, 800);
+          
+          if (DEBUG) console.log('[CameraScanner] Preprocessed image URL generated, size:', scaledWidth, 'x', scaledHeight);
+  
+          // Alignment check: skip OCR if not enough dark pixels in the crop region
+          // This avoids wasting CPU/battery on frames where the card isn't aligned yet
+          let darkPixelCount = 0;
+          for (let i = 0; i < grayscaleValues.length; i++) {
+            if (grayscaleValues[i] < 100) darkPixelCount++;
           }
-          return;
+          const darkPixelRatio = darkPixelCount / grayscaleValues.length;
+          if (darkPixelRatio < MIN_DARK_PIXEL_RATIO) {
+            if (DEBUG) console.log('[CameraScanner] Skipping OCR: insufficient dark pixels (ratio:', darkPixelRatio.toFixed(3), ')');
+            setScanningStatus('Align the card corner with the guide');
+            if (isScanningRef.current) {
+              setTimeout(scanFrame, 800);
+            }
+            return;
+          }
+          if (DEBUG) console.log('[CameraScanner] Alignment check passed: dark pixel ratio =', darkPixelRatio.toFixed(3));
         }
-        if (DEBUG) console.log('[CameraScanner] Alignment check passed: dark pixel ratio =', darkPixelRatio.toFixed(3));
 
         try {
           if (!isScanningRef.current) {
@@ -656,6 +710,19 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           isProcessingRef.current = true;
           
           const result = await workerRef.current.recognize(imageUrl);
+          
+          // Always log raw OCR output for diagnosis (not gated by DEBUG)
+          console.log('[OCR RAW]', {
+            text: JSON.stringify(result.data.text),
+            confidence: result.data.confidence,
+            wordCount: result.data.words?.length ?? 0,
+          });
+          
+          // Push formatted entry to on-screen debug log (only if thumbnail is shown)
+          if (SHOW_DEBUG_THUMBNAIL) {
+            const summary = `"${result.data.text.trim().replace(/\s+/g, ' ').slice(0, 40)}" | conf: ${Math.round(result.data.confidence)} | words: ${result.data.words?.length ?? 0}`;
+            setOcrDebugLog(prev => [summary, ...prev].slice(0, MAX_DEBUG_LOG_LINES));
+          }
           
           // Release the processing lock
           isProcessingRef.current = false;
@@ -886,7 +953,21 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
                   style={{ zIndex: 30, maxWidth: '40%' }}
                 >
                   <img src={debugImageUrl} alt="OCR debug preview" style={{ width: '100%', display: 'block' }} />
-                  <p className="text-red-400 text-[10px] text-center">OCR input</p>
+                  <p className="text-red-400 text-[10px] text-center border-t border-red-500/50">OCR input</p>
+                  <div className="bg-black/90 px-1 py-1 max-h-32 overflow-y-auto">
+                    {ocrDebugLog.length === 0 ? (
+                      <p className="text-gray-500 text-[9px] text-center">No OCR results yet</p>
+                    ) : (
+                      ocrDebugLog.map((line, i) => (
+                        <p
+                          key={i}
+                          className={`text-[9px] font-mono leading-tight ${i === 0 ? 'text-green-400' : 'text-gray-500'}`}
+                        >
+                          {line}
+                        </p>
+                      ))
+                    )}
+                  </div>
                 </div>
               )}
               
