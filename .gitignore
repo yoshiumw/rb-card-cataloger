@@ -7,31 +7,20 @@ dist/
 build/
 *.js.map
 *.ts.map
-*.jsx.map
-*.tsx.map
 
-# Logs
+# Logs and temp files
 *.log
+*.tmp
 
 # Environment variables
 .env
 .env.local
 *.env.*
 
-# IDE files
+# Editors
 .vscode/
 .idea/
 *.swp
-*.swo
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Coverage reports
-coverage/
-htmlcov/
-*.coverage
 
 # Python
 __pycache__/
@@ -39,20 +28,18 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
-*.so
-.PyCharm
-.pytest_cache/
-.mypy_cache/
+venv/
+.venv/
+.env
 
-# Node.js
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Coverage
+coverage/
+htmlcov/
+.coverage
 
-# Temporary files
-*.tmp
-*.temp
-*.bak
+# OS generated files
+.DS_Store
+Thumbs.db
 
 # Compressed files
 *.zip
