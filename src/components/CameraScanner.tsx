@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Camera, X, Loader2 } from 'lucide-react';
+import { Camera, X, Loader2, ChevronUp, ChevronDown } from 'lucide-react';
 import Tesseract from 'tesseract.js';
 
 interface CameraScannerProps {
@@ -12,7 +12,8 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [scanningStatus, setScanningStatus] = useState('Initializing camera...');
+  const [scanningStatus, setScanningStatus] = useState('Initializing OCR engine...');
+  const [showInstructions, setShowInstructions] = useState(false);
   const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
@@ -21,7 +22,6 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
     const initCamera = async () => {
       try {
         setError(null);
-        setScanningStatus('Requesting camera access...');
         
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
@@ -47,8 +47,6 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           } catch (playErr) {
             console.error('Error playing video:', playErr);
           }
-          
-          setScanningStatus('Camera ready. Position card ID in the frame.');
           
           // Start scanning after video is loaded
           videoRef.current.onloadedmetadata = () => {
@@ -331,11 +329,11 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
                 </div>
               </div>
               
-              {/* Status text */}
-              <div className="absolute top-4 left-4 right-4 text-center">
-                <div className="inline-block bg-black/80 px-6 py-3 rounded-lg backdrop-blur-sm">
-                  <p className="text-white text-sm font-medium">
-                    {isScanning && <Loader2 size={16} className="inline animate-spin mr-2" />}
+              {/* Status text - compact, positioned at bottom near scanning area */}
+              <div className="absolute bottom-4 left-4 right-4 text-center">
+                <div className="inline-block bg-black/80 px-4 py-2 rounded-lg backdrop-blur-sm max-w-full">
+                  <p className="text-white text-xs font-medium truncate">
+                    {isScanning && <Loader2 size={14} className="inline animate-spin mr-1" />}
                     {scanningStatus}
                   </p>
                 </div>
@@ -345,19 +343,31 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
         )}
       </div>
 
-      {/* Instructions - positioned above video with higher z-index */}
+      {/* Collapsible Instructions */}
       {!error && (
-        <div className="bg-gray-900 border-t border-gray-700 p-4 relative" style={{ zIndex: 20 }}>
-          <div className="max-w-2xl mx-auto">
-            <h3 className="text-white font-semibold mb-2">How to scan:</h3>
-            <ul className="text-gray-400 text-sm space-y-1">
-              <li>• Position the card so the ID in the bottom-left corner is within the purple frame</li>
-              <li>• Ensure good lighting - avoid shadows and glare on the card</li>
-              <li>• Hold steady while the scanner processes the image (watch for status updates)</li>
-              <li>• The scanner will automatically detect and extract the card ID</li>
-              <li>• If text is detected but not recognized, try adjusting the angle or distance</li>
-            </ul>
-          </div>
+        <div className="bg-gray-900 border-t border-gray-700 relative" style={{ zIndex: 20 }}>
+          <button
+            onClick={() => setShowInstructions(!showInstructions)}
+            className="w-full p-3 flex items-center justify-between text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+          >
+            <span className="text-sm font-medium">How to scan</span>
+            {showInstructions ? (
+              <ChevronUp size={18} />
+            ) : (
+              <ChevronDown size={18} />
+            )}
+          </button>
+          {showInstructions && (
+            <div className="px-4 pb-4 max-w-2xl mx-auto">
+              <ul className="text-gray-400 text-sm space-y-1">
+                <li>• Position the card so the ID in the bottom-left corner is within the purple frame</li>
+                <li>• Ensure good lighting - avoid shadows and glare on the card</li>
+                <li>• Hold steady while the scanner processes the image (watch for status updates)</li>
+                <li>• The scanner will automatically detect and extract the card ID</li>
+                <li>• If text is detected but not recognized, try adjusting the angle or distance</li>
+              </ul>
+            </div>
+          )}
         </div>
       )}
     </div>
