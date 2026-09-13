@@ -1,6 +1,59 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { Camera, X, Loader2, ChevronUp, ChevronDown } from 'lucide-react';
-import Tesseract from 'tesseract.js';
+import Tesseract, { PSM } from 'tesseract.js';
+
+// Configuration constants
+const DEBUG = false;
+const ENABLE_EROSION = false;
+const MIN_OCR_CONFIDENCE = 60;
+const REQUIRED_CONSECUTIVE_MATCHES = 2;
+const PSM_MODE = PSM.SINGLE_LINE; // Alternative: PSM.SPARSE_TEXT
+
+/**
+ * Compute Otsu's threshold for adaptive binarization.
+ * Analyzes the grayscale histogram to find optimal threshold automatically.
+ */
+function computeOtsuThreshold(grayscaleData: Uint8ClampedArray): number {
+  // Build histogram (256 bins for 0-255 values)
+  const histogram = new Array(256).fill(0);
+  for (let i = 0; i < grayscaleData.length; i += 4) {
+    histogram[grayscaleData[i]]++;
+  }
+
+  const total = grayscaleData.length / 4;
+  
+  let sum = 0;
+  for (let i = 0; i < 256; i++) {
+    sum += i * histogram[i];
+  }
+
+  let sumB = 0;
+  let wB = 0;
+  let wF = 0;
+  let maxVariance = 0;
+  let threshold = 0;
+
+  for (let i = 0; i < 256; i++) {
+    wB += histogram[i];
+    if (wB === 0) continue;
+    
+    wF = total - wB;
+    if (wF === 0) break;
+
+    sumB += i * histogram[i];
+
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+
+    const varianceBetween = wB * wF * Math.pow(mB - mF, 2);
+    if (varianceBetween > maxVariance) {
+      maxVariance = varianceBetween;
+      threshold = i;
+    }
+  }
+
+  return threshold;
+}
 
 interface CameraScannerProps {
   onCardIdDetected: (cardId: string) => void;
@@ -10,6 +63,9 @@ interface CameraScannerProps {
 export default function CameraScanner({ onCardIdDetected, onClose }: CameraScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const workerRef = useRef<Tesseract.Worker | null>(null);
+  const isProcessingRef = useRef<boolean>(false);
+  const lastMatchRef = useRef<{ id: string; count: number } | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scanningStatus, setScanningStatus] = useState('Initializing OCR engine...');
@@ -20,12 +76,37 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
   useEffect(() => {
     let mounted = true;
     
-    console.log('[CameraScanner] Component mounted, initializing camera...');
+    if (DEBUG) console.log('[CameraScanner] Component mounted, initializing camera...');
+    
+    // Initialize Tesseract worker once
+    const initWorker = async () => {
+      try {
+        if (DEBUG) console.log('[CameraScanner] Initializing Tesseract worker...');
+        const worker = await Tesseract.createWorker('eng', 2, {
+          logger: (m) => {
+            if (DEBUG) console.log('[Tesseract Logger]', m.status, m.progress ? `(${Math.round(m.progress * 100)}%)` : '');
+          }
+        });
+        
+        await worker.setParameters({
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-•·/',
+          preserve_interword_spaces: '1',
+          tessedit_pageseg_mode: PSM_MODE
+        });
+        
+        workerRef.current = worker;
+        if (DEBUG) console.log('[CameraScanner] Tesseract worker initialized successfully');
+      } catch (err) {
+        console.error('[CameraScanner] Failed to initialize Tesseract worker:', err);
+      }
+    };
+    
+    initWorker();
     
     const initCamera = async () => {
       try {
         setError(null);
-        console.log('[CameraScanner] Requesting camera access...');
+        if (DEBUG) console.log('[CameraScanner] Requesting camera access...');
         
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
@@ -35,10 +116,10 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           }
         });
         
-        console.log('[CameraScanner] Camera access granted, stream obtained');
+        if (DEBUG) console.log('[CameraScanner] Camera access granted, stream obtained');
         
         if (!mounted) {
-          console.log('[CameraScanner] Component unmounted during camera init, stopping stream');
+          if (DEBUG) console.log('[CameraScanner] Component unmounted during camera init, stopping stream');
           stream.getTracks().forEach(track => track.stop());
           return;
         }
@@ -48,14 +129,14 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
         if (videoRef.current) {
           const video = videoRef.current;
           video.srcObject = stream;
-          console.log('[CameraScanner] Video srcObject set');
-          console.log('[CameraScanner] Video readyState before play:', video.readyState);
+          if (DEBUG) console.log('[CameraScanner] Video srcObject set');
+          if (DEBUG) console.log('[CameraScanner] Video readyState before play:', video.readyState);
           
           // iOS Safari requires explicit play() call
           try {
             await video.play();
-            console.log('[CameraScanner] Video playback started');
-            console.log('[CameraScanner] Video readyState after play:', video.readyState);
+            if (DEBUG) console.log('[CameraScanner] Video playback started');
+            if (DEBUG) console.log('[CameraScanner] Video readyState after play:', video.readyState);
           } catch (playErr) {
             console.error('[CameraScanner] Error playing video:', playErr);
           }
@@ -64,37 +145,37 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           let scanStarted = false;
           const tryStartScanning = () => {
             if (scanStarted || !mounted) {
-              console.log('[CameraScanner] Skipping duplicate startScanning call, scanStarted:', scanStarted, 'mounted:', mounted);
+              if (DEBUG) console.log('[CameraScanner] Skipping duplicate startScanning call, scanStarted:', scanStarted, 'mounted:', mounted);
               return;
             }
             scanStarted = true;
-            console.log('[CameraScanner] Video ready, starting scanning (readyState:', video.readyState, ')');
+            if (DEBUG) console.log('[CameraScanner] Video ready, starting scanning (readyState:', video.readyState, ')');
             startScanning();
           };
           
           // Multiple fallback methods to ensure scanning starts
           // Method 1: onloadedmetadata
           video.onloadedmetadata = () => {
-            console.log('[CameraScanner] Video metadata loaded event fired');
+            if (DEBUG) console.log('[CameraScanner] Video metadata loaded event fired');
             tryStartScanning();
           };
           
           // Method 2: onloadeddata - fires when first frame data is loaded
           video.onloadeddata = () => {
-            console.log('[CameraScanner] Video loadeddata event fired');
+            if (DEBUG) console.log('[CameraScanner] Video loadeddata event fired');
             tryStartScanning();
           };
           
           // Method 3: oncanplay - fires when enough data is loaded to start playing
           video.oncanplay = () => {
-            console.log('[CameraScanner] Video canplay event fired');
+            if (DEBUG) console.log('[CameraScanner] Video canplay event fired');
             tryStartScanning();
           };
           
           // Method 4: Fallback timeout - if events don't fire, start anyway after 2 seconds
-          console.log('[CameraScanner] Setting 2s fallback timeout to start scanning');
+          if (DEBUG) console.log('[CameraScanner] Setting 2s fallback timeout to start scanning');
           setTimeout(() => {
-            console.log('[CameraScanner] Fallback timeout reached, readyState:', video.readyState);
+            if (DEBUG) console.log('[CameraScanner] Fallback timeout reached, readyState:', video.readyState);
             tryStartScanning();
           }, 2000);
         }
@@ -119,8 +200,15 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
     initCamera();
     
     return () => {
-      console.log('[CameraScanner] Component unmounting');
+      if (DEBUG) console.log('[CameraScanner] Component unmounting');
       mounted = false;
+      
+      // Terminate the worker on cleanup
+      if (workerRef.current) {
+        workerRef.current.terminate().catch(console.error);
+        workerRef.current = null;
+      }
+      
       stopCamera();
     };
   }, []);
@@ -143,15 +231,15 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
   };
 
   const startScanning = () => {
-    console.log('[CameraScanner] startScanning called');
+    if (DEBUG) console.log('[CameraScanner] startScanning called');
     // Set both state and ref immediately to avoid timing issues
     setIsScanning(true);
     isScanningRef.current = true;
-    console.log('[CameraScanner] isScanning set to true (state and ref)');
+    if (DEBUG) console.log('[CameraScanner] isScanning set to true (state and ref)');
     
     // Start the scan loop with minimal delay
     setTimeout(() => {
-      console.log('[CameraScanner] Starting first scan frame');
+      if (DEBUG) console.log('[CameraScanner] Starting first scan frame');
       scanFrame();
     }, 50);
   };
@@ -162,24 +250,33 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
     
     // Check if we should continue scanning using the ref for immediate value
     const shouldScan = isScanningRef.current;
-    console.log('[CameraScanner] scanFrame started, video readyState:', video?.readyState, 'isScanning (ref):', shouldScan);
+    if (DEBUG) console.log('[CameraScanner] scanFrame started, video readyState:', video?.readyState, 'isScanning (ref):', shouldScan);
     
     if (!shouldScan) {
-      console.log('[CameraScanner] scanFrame aborted: scanning was stopped (ref check)');
+      if (DEBUG) console.log('[CameraScanner] scanFrame aborted: scanning was stopped (ref check)');
+      return;
+    }
+    
+    // Guard against concurrent scans - skip if a previous recognition is still in flight
+    if (isProcessingRef.current) {
+      if (DEBUG) console.log('[CameraScanner] scanFrame skipped: previous recognition still in progress');
+      if (isScanningRef.current) {
+        setTimeout(scanFrame, 800);
+      }
       return;
     }
     
     // Ensure video and canvas are ready
     if (!video || !canvas || video.readyState < 2) {
       // Video not ready yet, try again
-      console.log('[CameraScanner] Video not ready (readyState:', video?.readyState, '), retrying in 100ms');
+      if (DEBUG) console.log('[CameraScanner] Video not ready (readyState:', video?.readyState, '), retrying in 100ms');
       if (isScanningRef.current) {
         setTimeout(scanFrame, 100);
       }
       return;
     }
     
-    console.log('[CameraScanner] Video is ready, proceeding with OCR');
+    if (DEBUG) console.log('[CameraScanner] Video is ready, proceeding with OCR');
 
     const context = canvas.getContext('2d');
     if (!context) {
@@ -191,7 +288,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
       // Set canvas size to match video
       canvas.width = video.videoWidth || 1280;
       canvas.height = video.videoHeight || 720;
-      console.log('[CameraScanner] Canvas size:', canvas.width, 'x', canvas.height);
+      if (DEBUG) console.log('[CameraScanner] Canvas size:', canvas.width, 'x', canvas.height);
 
       // Draw video frame to canvas
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -202,7 +299,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
       const cropHeight = Math.floor(canvas.height * 0.25);
       const cropX = 0;
       const cropY = canvas.height - cropHeight;
-      console.log('[CameraScanner] Crop region:', { x: cropX, y: cropY, width: cropWidth, height: cropHeight });
+      if (DEBUG) console.log('[CameraScanner] Crop region:', { x: cropX, y: cropY, width: cropWidth, height: cropHeight });
 
       // Extract the region
       const imageData = context.getImageData(cropX, cropY, cropWidth, cropHeight);
@@ -217,13 +314,13 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
         tempContext.putImageData(imageData, 0, 0);
         
         // Apply advanced image preprocessing for better OCR accuracy
-        const cropWidth = imageData.width;
-        const cropHeight = imageData.height;
+        const imgCropWidth = imageData.width;
+        const imgCropHeight = imageData.height;
         
         // Step 1: Scale up 4x for maximum character detail (increased from 3x)
         const scale = 4;
-        const scaledWidth = cropWidth * scale;
-        const scaledHeight = cropHeight * scale;
+        const scaledWidth = imgCropWidth * scale;
+        const scaledHeight = imgCropHeight * scale;
         
         const scaledCanvas = document.createElement('canvas');
         scaledCanvas.width = scaledWidth;
@@ -248,108 +345,115 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           data[i + 2] = gray; // B
         }
         
-        // Step 4: Apply adaptive threshold for binarization
-        // Calculate local threshold based on neighborhood
-        const threshold = 140; // Slightly higher for better contrast
+        // Step 4: Apply Otsu's method for adaptive threshold binarization
+        const otsuThreshold = computeOtsuThreshold(data);
+        if (DEBUG) console.log('[CameraScanner] Otsu threshold computed:', otsuThreshold);
+        
         for (let i = 0; i < data.length; i += 4) {
           const gray = data[i];
-          // Boost contrast: make dark darker, light lighter
-          const value = gray > threshold ? 255 : 0;
+          const value = gray > otsuThreshold ? 255 : 0;
           data[i] = value;
           data[i + 1] = value;
           data[i + 2] = value;
         }
         
-        // Step 5: Apply morphological erosion to remove small noise
-        // Simple 3x3 erosion kernel
-        const erodedData = new Uint8ClampedArray(data);
-        const width = scaledWidth;
-        const height = scaledHeight;
-        
-        for (let y = 1; y < height - 1; y++) {
-          for (let x = 1; x < width - 1; x++) {
-            const idx = (y * width + x) * 4;
-            let minVal = 255;
-            
-            // Check 3x3 neighborhood
-            for (let dy = -1; dy <= 1; dy++) {
-              for (let dx = -1; dx <= 1; dx++) {
-                const nIdx = ((y + dy) * width + (x + dx)) * 4;
-                if (data[nIdx] < minVal) {
-                  minVal = data[nIdx];
+        // Step 5: Apply morphological erosion to remove small noise (optional)
+        if (ENABLE_EROSION) {
+          const erodedData = new Uint8ClampedArray(data);
+          const width = scaledWidth;
+          const height = scaledHeight;
+          
+          for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+              const idx = (y * width + x) * 4;
+              let minVal = 255;
+              
+              // Check 3x3 neighborhood
+              for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                  const nIdx = ((y + dy) * width + (x + dx)) * 4;
+                  if (data[nIdx] < minVal) {
+                    minVal = data[nIdx];
+                  }
                 }
               }
+              
+              erodedData[idx] = minVal;
+              erodedData[idx + 1] = minVal;
+              erodedData[idx + 2] = minVal;
             }
-            
-            erodedData[idx] = minVal;
-            erodedData[idx + 1] = minVal;
-            erodedData[idx + 2] = minVal;
           }
-        }
-        
-        // Copy eroded data back
-        for (let i = 0; i < data.length; i++) {
-          data[i] = erodedData[i];
+          
+          // Copy eroded data back
+          for (let i = 0; i < data.length; i++) {
+            data[i] = erodedData[i];
+          }
         }
         
         scaledContext.putImageData(pixels, 0, 0);
         
         // Convert to data URL for Tesseract
         const imageUrl = scaledCanvas.toDataURL('image/png');
-        console.log('[CameraScanner] Preprocessed image URL generated, size:', scaledWidth, 'x', scaledHeight);
+        if (DEBUG) console.log('[CameraScanner] Preprocessed image URL generated, size:', scaledWidth, 'x', scaledHeight);
 
         try {
           if (!isScanningRef.current) {
-            console.log('[CameraScanner] Aborting before OCR: isScanning (ref) is false');
+            if (DEBUG) console.log('[CameraScanner] Aborting before OCR: isScanning (ref) is false');
             return;
           }
           
-          console.log('[CameraScanner] Starting Tesseract recognition...');
-          console.log('[CameraScanner] Tesseract worker initializing with image size:', cropWidth, 'x', cropHeight);
-          setScanningStatus('Loading OCR engine...');
-          
-          // Use Tesseract to recognize text with enhanced configuration for better accuracy
-          const worker = await Tesseract.createWorker('eng', 2, {
-            logger: (m) => {
-              console.log('[Tesseract Logger]', m.status, m.progress ? `(${Math.round(m.progress * 100)}%)` : '');
-              if (m.status === 'recognizing text' && isScanningRef.current) {
-                setScanningStatus(`Recognizing... ${Math.round(m.progress * 100)}%`);
-              } else if (m.status === 'initializing tesseract' && isScanningRef.current) {
-                setScanningStatus('Initializing OCR engine...');
-              } else if (m.status === 'loading tesseract core' && isScanningRef.current) {
-                setScanningStatus('Loading OCR core...');
-              } else if (m.status === 'initialized tesseract' && isScanningRef.current) {
-                setScanningStatus('OCR initialized, processing...');
-              }
+          // Wait for worker to be ready
+          if (!workerRef.current) {
+            if (DEBUG) console.log('[CameraScanner] Worker not ready, retrying in 500ms');
+            setScanningStatus('Initializing OCR...');
+            if (isScanningRef.current) {
+              setTimeout(scanFrame, 500);
             }
-          });
+            return;
+          }
           
-          await worker.setParameters({
-            tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-•·/',
-            preserve_interword_spaces: '1'
-          });
+          if (DEBUG) console.log('[CameraScanner] Starting Tesseract recognition...');
+          setScanningStatus('Recognizing text...');
           
-          const result = await worker.recognize(imageUrl);
-          await worker.terminate();
+          // Mark as processing to prevent concurrent scans
+          isProcessingRef.current = true;
           
-          console.log('[CameraScanner] Tesseract recognition completed');
+          const result = await workerRef.current.recognize(imageUrl);
+          
+          // Release the processing lock
+          isProcessingRef.current = false;
+          
+          if (DEBUG) console.log('[CameraScanner] Tesseract recognition completed');
 
           if (!isScanningRef.current) {
-            console.log('[CameraScanner] Aborting after OCR: isScanning (ref) is false');
+            if (DEBUG) console.log('[CameraScanner] Aborting after OCR: isScanning (ref) is false');
             return;
           }
 
           const text = result.data.text;
-          console.log('[CameraScanner] OCR Result text:', JSON.stringify(text));
-          console.log('[CameraScanner] OCR Result confidence:', result.data.confidence);
-          console.log('[CameraScanner] OCR Result words:', result.data.words);
+          const confidence = result.data.confidence;
+          if (DEBUG) console.log('[CameraScanner] OCR Result text:', JSON.stringify(text));
+          if (DEBUG) console.log('[CameraScanner] OCR Result confidence:', confidence);
+          if (DEBUG) console.log('[CameraScanner] OCR Result words:', result.data.words);
+
+          // Confidence-based filtering
+          if (confidence < MIN_OCR_CONFIDENCE) {
+            if (DEBUG) console.log('[CameraScanner] Low confidence result:', confidence, '(threshold:', MIN_OCR_CONFIDENCE, ')');
+            setScanningStatus('Low confidence — adjust position/lighting');
+            
+            // Continue scanning
+            if (isScanningRef.current) {
+              setTimeout(scanFrame, 800);
+            }
+            return;
+          }
 
           // Extract card ID using regex - handles multiple formats:
           // 1. "SFD • 100/1xx" (actual card format with bullet and set size)
           // 2. "SFD-100" (API format)
           // 3. "SFD-100-298" (API format with set size)
           
-          let cardId = null;
+          let cardId: string | null = null;
           
           // Try to match "SET • NUMBER/TOTAL" format first
           const bulletPattern = /\b([A-Z]{2,5})\s*[•·]\s*(\d{1,4})(?:\/\d{1,4})?\b/i;
@@ -360,7 +464,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             const setCode = bulletMatch[1].toUpperCase();
             const cardNumber = bulletMatch[2];
             cardId = `${setCode}-${cardNumber}`;
-            console.log('[CameraScanner] Matched bullet pattern:', cardId);
+            if (DEBUG) console.log('[CameraScanner] Matched bullet pattern:', cardId);
           } else {
             // Try standard dash format
             const dashPattern = /\b([A-Z]{2,5}-\d{2,4}(?:-\d{2,4})?)\b/i;
@@ -368,31 +472,51 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             
             if (dashMatch) {
               cardId = dashMatch[1].toUpperCase();
-              console.log('[CameraScanner] Matched dash pattern:', cardId);
+              if (DEBUG) console.log('[CameraScanner] Matched dash pattern:', cardId);
             } else {
-              console.log('[CameraScanner] No pattern matched in text:', JSON.stringify(text));
+              if (DEBUG) console.log('[CameraScanner] No pattern matched in text:', JSON.stringify(text));
             }
           }
 
           if (cardId) {
-            console.log('[CameraScanner] Card ID detected:', cardId);
-            setScanningStatus(`✓ Found: ${cardId}`);
+            if (DEBUG) console.log('[CameraScanner] Card ID detected:', cardId);
             
-            // Stop scanning and notify parent
-            setIsScanning(false);
-            stopCamera();
+            // Consecutive matching logic
+            if (lastMatchRef.current && lastMatchRef.current.id === cardId) {
+              lastMatchRef.current.count++;
+              if (DEBUG) console.log('[CameraScanner] Consecutive match count:', lastMatchRef.current.count);
+              
+              if (lastMatchRef.current.count >= REQUIRED_CONSECUTIVE_MATCHES) {
+                if (DEBUG) console.log('[CameraScanner] Required consecutive matches reached:', REQUIRED_CONSECUTIVE_MATCHES);
+                setScanningStatus(`✓ Found: ${cardId}`);
+                
+                // Stop scanning and notify parent
+                setIsScanning(false);
+                stopCamera();
+                lastMatchRef.current = null;
+                
+                // Small delay before callback to show success message
+                setTimeout(() => {
+                  onCardIdDetected(cardId!);
+                }, 500);
+                return;
+              }
+            } else {
+              // New ID or different ID - reset counter
+              lastMatchRef.current = { id: cardId, count: 1 };
+              if (DEBUG) console.log('[CameraScanner] New ID detected, resetting counter');
+            }
             
-            // Small delay before callback to show success message
-            setTimeout(() => {
-              onCardIdDetected(cardId!);
-            }, 500);
-            return;
+            setScanningStatus(`Match found (${lastMatchRef.current.count}/${REQUIRED_CONSECUTIVE_MATCHES}): ${cardId}`);
+          } else {
+            // Reset match tracking when no valid ID is found
+            lastMatchRef.current = null;
           }
 
           // Show what OCR detected for debugging
           if (isScanningRef.current) {
             const previewText = text.trim().substring(0, 60).replace(/\s+/g, ' ');
-            console.log('[CameraScanner] OCR detected (no valid format):', previewText);
+            if (DEBUG) console.log('[CameraScanner] OCR detected (no valid format):', previewText);
             
             // Provide more detailed feedback about what was found
             if (previewText.length > 0) {
@@ -402,6 +526,8 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             }
           }
         } catch (err) {
+          // Release the processing lock on error
+          isProcessingRef.current = false;
           console.error('[CameraScanner] OCR error:', err);
           if (isScanningRef.current) {
             setScanningStatus('Processing error. Retrying...');
@@ -410,11 +536,11 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
       }
 
       // Continue scanning if still active
-      if (isScanningRef.current) {
-        console.log('[CameraScanner] Scheduling next scan in 800ms');
+      if (isScanningRef.current && !isProcessingRef.current) {
+        if (DEBUG) console.log('[CameraScanner] Scheduling next scan in 800ms');
         setTimeout(scanFrame, 800); // Scan every 0.8 seconds for faster feedback
       } else {
-        console.log('[CameraScanner] Not scheduling next scan: isScanning (ref) is false');
+        if (DEBUG) console.log('[CameraScanner] Not scheduling next scan: isScanning (ref) is false or processing in progress');
       }
     } catch (err) {
       console.error('[CameraScanner] Error in scanFrame:', err);
