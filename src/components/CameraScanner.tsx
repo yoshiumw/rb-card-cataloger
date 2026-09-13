@@ -19,9 +19,12 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
   useEffect(() => {
     let mounted = true;
     
+    console.log('[CameraScanner] Component mounted, initializing camera...');
+    
     const initCamera = async () => {
       try {
         setError(null);
+        console.log('[CameraScanner] Requesting camera access...');
         
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
@@ -31,7 +34,10 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           }
         });
         
+        console.log('[CameraScanner] Camera access granted, stream obtained');
+        
         if (!mounted) {
+          console.log('[CameraScanner] Component unmounted during camera init, stopping stream');
           stream.getTracks().forEach(track => track.stop());
           return;
         }
@@ -40,25 +46,30 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
         
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
+          console.log('[CameraScanner] Video srcObject set');
           
           // iOS Safari requires explicit play() call
           try {
             await videoRef.current.play();
+            console.log('[CameraScanner] Video playback started');
           } catch (playErr) {
-            console.error('Error playing video:', playErr);
+            console.error('[CameraScanner] Error playing video:', playErr);
           }
           
           // Start scanning after video is loaded
           videoRef.current.onloadedmetadata = () => {
+            console.log('[CameraScanner] Video metadata loaded');
             if (mounted) {
               startScanning();
+            } else {
+              console.log('[CameraScanner] Component unmounted before starting scan');
             }
           };
         }
       } catch (err) {
         if (!mounted) return;
         
-        console.error('Error accessing camera:', err);
+        console.error('[CameraScanner] Error accessing camera:', err);
         if (err instanceof Error) {
           if (err.name === 'NotAllowedError') {
             setError('Camera permission denied. Please allow camera access in your browser settings.');
@@ -76,6 +87,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
     initCamera();
     
     return () => {
+      console.log('[CameraScanner] Component unmounting');
       mounted = false;
       stopCamera();
     };
@@ -97,8 +109,10 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
   };
 
   const startScanning = () => {
+    console.log('[CameraScanner] startScanning called');
     // Delay start to ensure video is fully ready (especially for iOS)
     setTimeout(() => {
+      console.log('[CameraScanner] Setting isScanning to true and starting first scan');
       setIsScanning(true);
       scanFrame();
     }, 500);
@@ -106,14 +120,20 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
 
   const scanFrame = async () => {
     // Check if we should continue scanning
-    if (!isScanning) return;
+    if (!isScanning) {
+      console.log('[CameraScanner] scanFrame aborted: isScanning is false');
+      return;
+    }
     
     const video = videoRef.current;
     const canvas = canvasRef.current;
     
+    console.log('[CameraScanner] scanFrame started, video readyState:', video?.readyState);
+    
     // Ensure video and canvas are ready
     if (!video || !canvas || video.readyState < 2) {
       // Video not ready yet, try again
+      console.log('[CameraScanner] Video not ready, retrying in 100ms');
       if (isScanning) {
         setTimeout(scanFrame, 100);
       }
@@ -121,12 +141,16 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
     }
 
     const context = canvas.getContext('2d');
-    if (!context) return;
+    if (!context) {
+      console.error('[CameraScanner] Failed to get canvas context');
+      return;
+    }
 
     try {
       // Set canvas size to match video
       canvas.width = video.videoWidth || 1280;
       canvas.height = video.videoHeight || 720;
+      console.log('[CameraScanner] Canvas size:', canvas.width, 'x', canvas.height);
 
       // Draw video frame to canvas
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -137,6 +161,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
       const cropHeight = Math.floor(canvas.height * 0.25);
       const cropX = 0;
       const cropY = canvas.height - cropHeight;
+      console.log('[CameraScanner] Crop region:', { x: cropX, y: cropY, width: cropWidth, height: cropHeight });
 
       // Extract the region
       const imageData = context.getImageData(cropX, cropY, cropWidth, cropHeight);
@@ -170,29 +195,46 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
         
         // Convert to data URL for Tesseract
         const imageUrl = tempCanvas.toDataURL('image/png');
+        console.log('[CameraScanner] Image URL generated, length:', imageUrl.length);
 
         try {
-          if (!isScanning) return; // Check again before processing
+          if (!isScanning) {
+            console.log('[CameraScanner] Aborting before OCR: isScanning is false');
+            return;
+          }
           
+          console.log('[CameraScanner] Starting Tesseract recognition...');
           setScanningStatus('Processing image...');
           
           // Use Tesseract to recognize text with enhanced configuration for better accuracy
           const result = await Tesseract.recognize(imageUrl, 'eng', {
             logger: (m) => {
+              console.log('[Tesseract Logger]', m.status, m.progress ? `(${Math.round(m.progress * 100)}%)` : '');
               if (m.status === 'recognizing text' && isScanning) {
                 setScanningStatus(`Recognizing... ${Math.round(m.progress * 100)}%`);
               } else if (m.status === 'initializing tesseract' && isScanning) {
                 setScanningStatus('Initializing OCR engine...');
+              } else if (m.status === 'loading tesseract core' && isScanning) {
+                setScanningStatus('Loading OCR core...');
+              } else if (m.status === 'initialized tesseract' && isScanning) {
+                setScanningStatus('OCR initialized, processing...');
               }
             },
             tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-•·/',
             preserve_interword_spaces: '1'
           });
+          
+          console.log('[CameraScanner] Tesseract recognition completed');
 
-          if (!isScanning) return; // Check again after processing
+          if (!isScanning) {
+            console.log('[CameraScanner] Aborting after OCR: isScanning is false');
+            return;
+          }
 
           const text = result.data.text;
-          console.log('OCR Result:', text);
+          console.log('[CameraScanner] OCR Result text:', JSON.stringify(text));
+          console.log('[CameraScanner] OCR Result confidence:', result.data.confidence);
+          console.log('[CameraScanner] OCR Result words:', result.data.words);
 
           // Extract card ID using regex - handles multiple formats:
           // 1. "SFD • 100/1xx" (actual card format with bullet and set size)
@@ -210,6 +252,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             const setCode = bulletMatch[1].toUpperCase();
             const cardNumber = bulletMatch[2];
             cardId = `${setCode}-${cardNumber}`;
+            console.log('[CameraScanner] Matched bullet pattern:', cardId);
           } else {
             // Try standard dash format
             const dashPattern = /\b([A-Z]{2,5}-\d{2,4}(?:-\d{2,4})?)\b/i;
@@ -217,11 +260,14 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             
             if (dashMatch) {
               cardId = dashMatch[1].toUpperCase();
+              console.log('[CameraScanner] Matched dash pattern:', cardId);
+            } else {
+              console.log('[CameraScanner] No pattern matched in text:', JSON.stringify(text));
             }
           }
 
           if (cardId) {
-            console.log('Card ID detected:', cardId);
+            console.log('[CameraScanner] Card ID detected:', cardId);
             setScanningStatus(`✓ Found: ${cardId}`);
             
             // Stop scanning and notify parent
@@ -238,7 +284,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           // Show what OCR detected for debugging
           if (isScanning) {
             const previewText = text.trim().substring(0, 60).replace(/\s+/g, ' ');
-            console.log('OCR detected:', previewText);
+            console.log('[CameraScanner] OCR detected (no valid format):', previewText);
             
             // Provide more detailed feedback about what was found
             if (previewText.length > 0) {
@@ -248,7 +294,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             }
           }
         } catch (err) {
-          console.error('OCR error:', err);
+          console.error('[CameraScanner] OCR error:', err);
           if (isScanning) {
             setScanningStatus('Processing error. Retrying...');
           }
@@ -257,10 +303,13 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
 
       // Continue scanning if still active
       if (isScanning) {
+        console.log('[CameraScanner] Scheduling next scan in 800ms');
         setTimeout(scanFrame, 800); // Scan every 0.8 seconds for faster feedback
+      } else {
+        console.log('[CameraScanner] Not scheduling next scan: isScanning is false');
       }
     } catch (err) {
-      console.error('Error in scanFrame:', err);
+      console.error('[CameraScanner] Error in scanFrame:', err);
       if (isScanning) {
         setScanningStatus('Scanning error. Retrying...');
         setTimeout(scanFrame, 1500);
