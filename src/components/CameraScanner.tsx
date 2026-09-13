@@ -73,6 +73,30 @@ function mapDisplayRectToVideoRect(
 }
 
 /**
+ * Compute Levenshtein distance between two strings.
+ * Used to support 1-character OCR / typo matching for set codes.
+ */
+function levenshteinDistance(a: string, b: string): number {
+  const matrix: number[][] = Array(b.length + 1).fill(null).map(() => Array(a.length + 1).fill(0));
+
+  for (let i = 0; i <= a.length; i++) matrix[0][i] = i;
+  for (let j = 0; j <= b.length; j++) matrix[j][0] = j;
+
+  for (let j = 1; j <= b.length; j++) {
+    for (let i = 1; i <= a.length; i++) {
+      const indicator = a[i - 1] === b[j - 1] ? 0 : 1;
+      matrix[j][i] = Math.min(
+        matrix[j][i - 1] + 1,
+        matrix[j - 1][i] + 1,
+        matrix[j - 1][i - 1] + indicator
+      );
+    }
+  }
+
+  return matrix[b.length][a.length];
+}
+
+/**
  * Smooth crop position over multiple frames to dampen hand jitter.
  * Uses a moving average of the last N frames to stabilize the crop region.
  */
@@ -222,6 +246,55 @@ function computeOtsuThreshold(grayscaleData: Uint8ClampedArray): number {
   return threshold;
 }
 
+/**
+ * Find the best matching known set code using Levenshtein distance.
+ * Allows 1-character typos/OCR errors (SED->SFD, 0GN->OGN, etc.)
+ */
+function fuzzyMatchSetCode(input: string, knownCodes: string[]): string | null {
+  const normalized = input.toUpperCase().trim();
+
+  if (knownCodes.includes(normalized)) {
+    return normalized;
+  }
+
+  let closestCode: string | null = null;
+  let closestDistance = Infinity;
+  const MAX_DISTANCE = 1;
+
+  for (const code of knownCodes) {
+    const distance = levenshteinDistance(normalized, code);
+    if (distance <= MAX_DISTANCE && distance < closestDistance) {
+      closestCode = code;
+      closestDistance = distance;
+    }
+  }
+
+  return closestCode;
+}
+
+/**
+ * Normalize user-entered card ID to "SETCODE-NUMBER" format.
+ * Handles: "SFDXXX", "SFD-XXX", "SFD-153/221", "sfd123", etc.
+ * Uses fuzzy set-code matching to correct typos like "0GN" -> "OGN".
+ */
+function normalizeCardID(input: string, knownCodes: string[]): string | null {
+  const match = input.match(/([A-Z0O]{2,3})\s*[-•·./\s]*\s*(\d{1,4})(?:\s*[/-]\s*\d{1,4})?/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const rawCode = match[1];
+  const cardNumber = match[2];
+  const matchedCode = fuzzyMatchSetCode(rawCode, knownCodes);
+
+  if (!matchedCode) {
+    return null;
+  }
+
+  return `${matchedCode}-${cardNumber}`;
+}
+
 interface CameraScannerProps {
   onCardIdDetected: (cardId: string) => void;
   onClose: () => void;
@@ -245,6 +318,21 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
   const streamRef = useRef<MediaStream | null>(null);
   const isScanningRef = useRef(false);
   const cropHistoryRef = useRef<Array<{ x: number; y: number; width: number; height: number }>>([]);
+
+  const handleManualCardIDEntry = (userInput: string) => {
+    const normalized = normalizeCardID(userInput, KNOWN_SET_CODES);
+
+    if (normalized) {
+      console.log('[CameraScanner] Normalized manual entry:', userInput, '->', normalized);
+      onCardIdDetected(normalized);
+      setScannedCards(prev => [...prev, normalized]);
+      setLastSuccessMessage(normalized);
+      setTimeout(() => setLastSuccessMessage(null), 2000);
+    } else {
+      console.log('[CameraScanner] Could not normalize manual entry:', userInput);
+      alert(`Invalid format. Expected something like: SFD123 or SFD-123`);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -730,8 +818,19 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           // Push formatted entry to on-screen debug log (only if thumbnail is shown)
           if (SHOW_DEBUG_THUMBNAIL) {
             const preview = result.data.text.trim().replace(/\s+/g, ' ').slice(0, 50);
-            const setCodeMatch = preview.match(new RegExp(`(${KNOWN_SET_CODES.join('|')})`, 'i'));
-            const status = setCodeMatch ? `✓ Set found: ${setCodeMatch[1]}` : `Raw: "${preview}"`;
+            const setCodeMatch = preview.match(/([A-Z0O]{2,3})/i);
+
+            let status = `Raw: "${preview}"`;
+            if (setCodeMatch) {
+              const rawCode = setCodeMatch[1];
+              const fuzzyCode = fuzzyMatchSetCode(rawCode, KNOWN_SET_CODES);
+              if (fuzzyCode && fuzzyCode !== rawCode.toUpperCase()) {
+                status = `Fuzzy: ${rawCode} → ${fuzzyCode}`;
+              } else if (fuzzyCode) {
+                status = `Matched: ${fuzzyCode}`;
+              }
+            }
+
             setOcrDebugLog(prev => [status, ...prev].slice(0, MAX_DEBUG_LOG_LINES));
           }
 
@@ -762,27 +861,25 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             return;
           }
 
-          // Build a pattern that matches known set codes with flexible separators
-          // Valid formats: "SFD-153/221", "SFD153/221", "SFD • 153/221", etc.
-          const setCodePattern = KNOWN_SET_CODES.join('|');
-
-          // Match: SET_CODE [optional separator] NUMBER [optional /TOTAL]
-          // This is intentionally permissive on separators and spacing
-          const strictPattern = new RegExp(
-            `(${setCodePattern})\\s*[-•·.\\s]*\\s*(\\d{1,4})\\s*(?:[/-]\\s*\\d{1,4})?`,
-            'i'
-          );
-
-          const match = result.data.text.match(strictPattern);
+          // Extract set code and number from OCR text using fuzzy matching
+          // This allows OCR errors like "SED" -> "SFD" or "0GN" -> "OGN"
           let cardId: string | null = null;
 
-          if (match) {
-            const setCode = match[1].toUpperCase();
-            const cardNumber = match[2];
-            cardId = `${setCode}-${cardNumber}`;
-            console.log('[CameraScanner] Matched card ID:', cardId, 'from text:', JSON.stringify(result.data.text));
+          const potentialMatch = result.data.text.match(/([A-Z0O]{2,3})\s*[-•·.\s]*\s*(\d{1,4})/i);
+
+          if (potentialMatch) {
+            const rawSetCode = potentialMatch[1];
+            const cardNumber = potentialMatch[2];
+            const matchedSetCode = fuzzyMatchSetCode(rawSetCode, KNOWN_SET_CODES);
+
+            if (matchedSetCode) {
+              cardId = `${matchedSetCode}-${cardNumber}`;
+              console.log('[CameraScanner] Fuzzy-matched card ID:', cardId, 'from text:', JSON.stringify(result.data.text));
+            } else {
+              console.log('[CameraScanner] Set code not recognized (even after fuzzy match):', rawSetCode);
+            }
           } else {
-            console.log('[CameraScanner] No valid card ID found in:', JSON.stringify(result.data.text));
+            console.log('[CameraScanner] No card ID pattern found in:', JSON.stringify(result.data.text));
           }
 
           if (cardId) {
