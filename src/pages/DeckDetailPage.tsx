@@ -402,6 +402,7 @@ function SectionDetail({ section }: { section: SectionCompletion }) {
             <tbody>
               {section.cards.map((card, i) => {
                 const price = card.cardId ? getPriceByCardNumber(card.cardId) : undefined;
+                console.log('Matching', card.cardName, '->', price);
                 const lineTotal = (price?.marketPrice ?? 0) * card.required;
                 
                 return (

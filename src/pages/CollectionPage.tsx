@@ -222,6 +222,7 @@ function CardItem({ card, onQuantityChange, onRemove }: {
 }) {
   const { getPriceByCardNumber, loading } = usePriceData();
   const price = getPriceByCardNumber(card.cardId);
+  console.log('Matching', card.cardName, '->', price);
 
   const typeColors: Record<string, string> = {
     Champion: 'from-yellow-600/20 to-amber-600/20 border-yellow-500/30',
