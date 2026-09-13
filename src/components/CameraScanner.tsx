@@ -8,9 +8,17 @@ const ENABLE_EROSION = false;
 const MIN_OCR_CONFIDENCE = 60;
 const REQUIRED_CONSECUTIVE_MATCHES = 2;
 const PSM_MODE = PSM.SINGLE_LINE; // Alternative: PSM.SPARSE_TEXT
-const FOOTER_CROP_HEIGHT_RATIO = 0.09; // Target bottom ~9% of frame for card footer
 const MAX_SET_CODE_EDIT_DISTANCE = 1;
 const KNOWN_SET_CODES = ['VEN']; // TODO: populate with full list of valid set codes
+
+// Corner guide sizing constants - tune based on real-world testing
+const CORNER_GUIDE_WIDTH_RATIO = 0.45;   // fraction of frame width
+const CORNER_GUIDE_HEIGHT_RATIO = 0.35;  // fraction of frame height
+// Within the corner region, the footer text line sits in roughly this bottom slice
+const FOOTER_TEXT_HEIGHT_RATIO = 0.22;   // fraction of the corner guide's height
+
+// Alignment check threshold
+const MIN_DARK_PIXEL_RATIO = 0.05; // minimum fraction of dark pixels to proceed with OCR
 
 /**
  * Compute Levenshtein distance between two strings.
@@ -407,10 +415,15 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
       // Draw video frame to canvas
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Crop the bottom footer strip of the card where the ID is located
-      // Targets full width and only bottom ~9% height (configurable via FOOTER_CROP_HEIGHT_RATIO)
-      const cropWidth = canvas.width;
-      const cropHeight = Math.floor(canvas.height * FOOTER_CROP_HEIGHT_RATIO);
+      // Crop region targets the bottom-left corner where card footer text appears
+      // Uses corner guide dimensions to focus on a thin strip at the very bottom of that region
+      // This avoids capturing card art/border above the text line
+      const cornerWidth = Math.floor(canvas.width * CORNER_GUIDE_WIDTH_RATIO);
+      const cornerHeight = Math.floor(canvas.height * CORNER_GUIDE_HEIGHT_RATIO);
+      // cropHeight is derived from FOOTER_TEXT_HEIGHT_RATIO (a ratio of the corner region's height)
+      // to capture only the thin footer-text slice at the very bottom of the corner-guide area
+      const cropWidth = cornerWidth;
+      const cropHeight = Math.floor(cornerHeight * FOOTER_TEXT_HEIGHT_RATIO);
       const cropX = 0;
       const cropY = canvas.height - cropHeight;
       if (DEBUG) console.log('[CameraScanner] Crop region:', { x: cropX, y: cropY, width: cropWidth, height: cropHeight });
@@ -516,6 +529,23 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
         // Convert to data URL for Tesseract
         const imageUrl = scaledCanvas.toDataURL('image/png');
         if (DEBUG) console.log('[CameraScanner] Preprocessed image URL generated, size:', scaledWidth, 'x', scaledHeight);
+
+        // Alignment check: skip OCR if not enough dark pixels in the crop region
+        // This avoids wasting CPU/battery on frames where the card isn't aligned yet
+        let darkPixelCount = 0;
+        for (let i = 0; i < grayscaleValues.length; i++) {
+          if (grayscaleValues[i] < 100) darkPixelCount++;
+        }
+        const darkPixelRatio = darkPixelCount / grayscaleValues.length;
+        if (darkPixelRatio < MIN_DARK_PIXEL_RATIO) {
+          if (DEBUG) console.log('[CameraScanner] Skipping OCR: insufficient dark pixels (ratio:', darkPixelRatio.toFixed(3), ')');
+          setScanningStatus('Align the card corner with the guide');
+          if (isScanningRef.current) {
+            setTimeout(scanFrame, 800);
+          }
+          return;
+        }
+        if (DEBUG) console.log('[CameraScanner] Alignment check passed: dark pixel ratio =', darkPixelRatio.toFixed(3));
 
         try {
           if (!isScanningRef.current) {
@@ -763,11 +793,22 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             
             {/* Scanning overlay - higher z-index to stay on top */}
             <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
-              {/* Scanning region indicator - wide, short rectangle at bottom matching FOOTER_CROP_HEIGHT_RATIO */}
-              <div className="absolute bottom-4 left-0 right-0 h-[9%] border-4 border-purple-500 border-dashed animate-pulse rounded-lg mx-4">
-                <div className="absolute top-0 left-0 w-full h-full bg-purple-500/20 rounded-lg" />
+              {/* L-shaped corner guide in bottom-left */}
+              <div
+                className="absolute bottom-8 left-4 pointer-events-none"
+                style={{
+                  width: `${CORNER_GUIDE_WIDTH_RATIO * 100}%`,
+                  height: `${CORNER_GUIDE_HEIGHT_RATIO * 100}%`,
+                }}
+              >
+                {/* Bottom edge of bracket */}
+                <div className="absolute bottom-0 left-0 w-full h-1 bg-purple-500 animate-pulse" />
+                {/* Left edge of bracket */}
+                <div className="absolute bottom-0 left-0 w-1 h-full bg-purple-500 animate-pulse" />
+                {/* Corner accent */}
+                <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-purple-400 rounded-bl-lg" />
                 <div className="absolute -top-6 left-0 text-xs text-purple-300 font-semibold">
-                  Card ID Area
+                  Align card&apos;s bottom-left corner here
                 </div>
               </div>
               
@@ -802,7 +843,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           {showInstructions && (
             <div className="px-4 pb-4 max-w-2xl mx-auto">
               <ul className="text-gray-400 text-sm space-y-1">
-                <li>• Position the card so the ID in the bottom-left corner is within the purple frame</li>
+                <li>• Align the bottom-left corner of the card with the purple corner bracket, filling as much of it as possible.</li>
                 <li>• Ensure good lighting - avoid shadows and glare on the card</li>
                 <li>• Hold steady while the scanner processes the image (watch for status updates)</li>
                 <li>• The scanner will automatically detect and extract the card ID</li>
