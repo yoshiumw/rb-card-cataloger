@@ -8,6 +8,7 @@ const SHOW_DEBUG_THUMBNAIL = true;
 const ENABLE_EROSION = false;
 const ENABLE_MIN_OCR_CONFIDENCE_CHECK = false;
 const MIN_OCR_CONFIDENCE = 0;
+const MIN_WORD_CONFIDENCE = 50; // TODO: tune based on testing
 const REQUIRED_CONSECUTIVE_MATCHES = 2;
 const RESTART_SCAN_DELAY = 1500;
 const PSM_MODE = PSM.SINGLE_LINE; // Alternative: PSM.SPARSE_TEXT
@@ -251,6 +252,17 @@ function computeOtsuThreshold(grayscaleData: Uint8ClampedArray): number {
   }
 
   return threshold;
+}
+
+function filterOCRWordsByConfidence(words: Tesseract.Word[], minConfidence: number): string {
+  if (!words || words.length === 0) return '';
+
+  const highConfidenceWords = words
+    .filter(word => word.confidence >= minConfidence)
+    .map(word => word.text.trim())
+    .filter(text => text.length > 0);
+
+  return highConfidenceWords.join(' ');
 }
 
 interface CameraScannerProps {
@@ -748,8 +760,8 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           isProcessingRef.current = true;
           
           const result = await workerRef.current.recognize(imageUrl);
-          
-          // Always log raw OCR output for diagnosis (not gated by DEBUG)
+
+          // Log raw output for debugging
           const recognizedWords = (result.data as any).words ?? [];
           const wordCount = Array.isArray(recognizedWords) ? recognizedWords.length : 0;
           console.log('[OCR RAW]', {
@@ -757,13 +769,27 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             confidence: result.data.confidence,
             wordCount,
           });
-          
+
+          // Filter to only high-confidence words to eliminate edge artifacts
+          const ocrWords = ((result.data as any).words ?? []) as Tesseract.Word[];
+          const filteredText = filterOCRWordsByConfidence(ocrWords, MIN_WORD_CONFIDENCE);
+          const filteredWords = filteredText.split(/\s+/).filter(word => word.length > 0);
+
+          console.log('[OCR FILTERED]', {
+            raw: JSON.stringify(result.data.text),
+            filtered: JSON.stringify(filteredText),
+            wordsKept: filteredWords.length,
+            wordsRemoved: wordCount - filteredWords.length,
+          });
+
           // Push formatted entry to on-screen debug log (only if thumbnail is shown)
           if (SHOW_DEBUG_THUMBNAIL) {
-            const summary = `"${result.data.text.trim().replace(/\s+/g, ' ').slice(0, 40)}" | conf: ${Math.round(result.data.confidence)} | words: ${wordCount}`;
+            const rawPreview = result.data.text.trim().replace(/\s+/g, ' ').slice(0, 30);
+            const filteredPreview = filteredText.trim().replace(/\s+/g, ' ').slice(0, 30);
+            const summary = `Raw: "${rawPreview}" → Filtered: "${filteredPreview}"`;
             setOcrDebugLog(prev => [summary, ...prev].slice(0, MAX_DEBUG_LOG_LINES));
           }
-          
+
           // Release the processing lock
           isProcessingRef.current = false;
           
@@ -774,7 +800,8 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             return;
           }
 
-          const text = result.data.text;
+          // Use filtered text for card ID extraction
+          const text = filteredText;
           const confidence = result.data.confidence;
           if (DEBUG) console.log('[CameraScanner] OCR Result text:', JSON.stringify(text));
           if (DEBUG) console.log('[CameraScanner] OCR Result confidence:', confidence);
@@ -791,7 +818,9 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             return;
           }
 
-          // Extract card ID using regex - handles multiple formats:
+          // Extract card ID using regex patterns
+          // Applied to FILTERED text (low-confidence words removed), so artifacts/garbage on edges are gone
+          // Try patterns in order: bullet format first, then dash format, then fuzzy matching
           // 1. "SFD • 100/1xx" (actual card format with bullet and set size)
           // 2. "SFD-100" (API format)
           // 3. "SFD-100-298" (API format with set size)
