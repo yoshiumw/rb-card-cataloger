@@ -6,7 +6,8 @@ import Tesseract, { PSM } from 'tesseract.js';
 const DEBUG = true;
 const SHOW_DEBUG_THUMBNAIL = true;
 const ENABLE_EROSION = false;
-const MIN_OCR_CONFIDENCE = 0; // TODO: restore to 60 after diagnosing OCR issues
+const ENABLE_MIN_OCR_CONFIDENCE_CHECK = false; // Set to true only if OCR confidence becomes reliable again.
+const MIN_OCR_CONFIDENCE = 60;
 const REQUIRED_CONSECUTIVE_MATCHES = 2;
 const PSM_MODE = PSM.SINGLE_LINE; // Alternative: PSM.SPARSE_TEXT
 const MAX_SET_CODE_EDIT_DISTANCE = 1;
@@ -739,8 +740,8 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           if (DEBUG) console.log('[CameraScanner] OCR Result text:', JSON.stringify(text));
           if (DEBUG) console.log('[CameraScanner] OCR Result confidence:', confidence);
 
-          // Confidence-based filtering
-          if (confidence < MIN_OCR_CONFIDENCE) {
+          // Confidence-based filtering (disabled by default because OCR confidence is unreliable here).
+          if (ENABLE_MIN_OCR_CONFIDENCE_CHECK && confidence < MIN_OCR_CONFIDENCE) {
             if (DEBUG) console.log('[CameraScanner] Low confidence result:', confidence, '(threshold:', MIN_OCR_CONFIDENCE, ')');
             setScanningStatus('Low confidence — adjust position/lighting');
             
