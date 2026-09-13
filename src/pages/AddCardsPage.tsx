@@ -91,10 +91,9 @@ export default function AddCardsPage() {
   };
 
   const handleCardIdDetected = async (cardId: string) => {
-    setCameraMode(false);
     setInputValue(cardId);
     
-    // Automatically add the card after a brief delay
+    // Automatically add the card after a brief delay while keeping the scanner open
     setTimeout(async () => {
       if (user) {
         setLoading(true);
