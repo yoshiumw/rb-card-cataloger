@@ -3,6 +3,7 @@ import { Search, Filter, SortAsc, SortDesc, Trash2, Minus, Plus, Library } from 
 import { getCollectionAsArray, removeCardFromCollection, updateCardQuantity, getCollectionSets } from '../services/collectionService';
 import { useAuth } from '../contexts/AuthContext';
 import { CollectionEntry } from '../types';
+import { usePriceData } from '../hooks/usePriceData';
 
 type SortField = 'name' | 'set' | 'type' | 'quantity' | 'added';
 type SortDir = 'asc' | 'desc';
@@ -219,6 +220,9 @@ function CardItem({ card, onQuantityChange, onRemove }: {
   onQuantityChange: (id: string, delta: number) => void;
   onRemove: (id: string) => void;
 }) {
+  const { getPriceByCardNumber, loading } = usePriceData();
+  const price = getPriceByCardNumber(card.cardId);
+
   const typeColors: Record<string, string> = {
     Champion: 'from-yellow-600/20 to-amber-600/20 border-yellow-500/30',
     Unit: 'from-blue-600/20 to-cyan-600/20 border-blue-500/30',
@@ -251,6 +255,17 @@ function CardItem({ card, onQuantityChange, onRemove }: {
         {card.rarity && (
           <span className="absolute top-2 left-2 text-xs px-2 py-0.5 rounded-full bg-black/50 text-white/80 backdrop-blur-sm">
             {card.rarity}
+          </span>
+        )}
+        {/* Price badge */}
+        {price?.marketPrice != null && (
+          <span className="absolute bottom-2 right-2 text-xs px-2 py-1 rounded-md bg-green-600/90 text-white font-medium shadow-lg">
+            ${price.marketPrice.toFixed(2)}
+          </span>
+        )}
+        {loading && price === undefined && (
+          <span className="absolute bottom-2 right-2 text-xs px-2 py-1 rounded-md bg-gray-600/90 text-gray-300 animate-pulse">
+            Loading...
           </span>
         )}
       </div>
