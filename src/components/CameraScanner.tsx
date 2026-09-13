@@ -6,16 +6,17 @@ import Tesseract, { PSM } from 'tesseract.js';
 const DEBUG = true;
 const SHOW_DEBUG_THUMBNAIL = true;
 const ENABLE_EROSION = false;
-const ENABLE_MIN_OCR_CONFIDENCE_CHECK = false; // Set to true only if OCR confidence becomes reliable again.
-const MIN_OCR_CONFIDENCE = 60;
+const ENABLE_MIN_OCR_CONFIDENCE_CHECK = false;
+const MIN_OCR_CONFIDENCE = 0;
 const REQUIRED_CONSECUTIVE_MATCHES = 2;
+const RESTART_SCAN_DELAY = 1500;
 const PSM_MODE = PSM.SINGLE_LINE; // Alternative: PSM.SPARSE_TEXT
 const MAX_SET_CODE_EDIT_DISTANCE = 1;
 const KNOWN_SET_CODES = ['VEN']; // TODO: populate with full list of valid set codes
 
 // Diagnostic flags for isolating OCR failures
-const INVERT_BINARIZED_OUTPUT = true; // TODO: test true if OCR fails on visibly-clear text (white-on-dark polarity)
-const BYPASS_PREPROCESSING = true; // TODO: test true to send Tesseract the raw crop, no grayscale/threshold/scale
+const INVERT_BINARIZED_OUTPUT = false;
+const BYPASS_PREPROCESSING = true;
 
 // Small box sized for a single short text line (e.g. "VEN • 101/166 • EN")
 // Width is generous (positioning slack); height is tight (maximizes character pixel size)
@@ -242,6 +243,8 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
   const [scanningStatus, setScanningStatus] = useState('Initializing OCR engine...');
   const [debugImageUrl, setDebugImageUrl] = useState<string | null>(null);
   const [ocrDebugLog, setOcrDebugLog] = useState<string[]>([]);
+  const [scannedCards, setScannedCards] = useState<string[]>([]);
+  const [lastSuccessMessage, setLastSuccessMessage] = useState<string | null>(null);
   const MAX_DEBUG_LOG_LINES = 6;
   const streamRef = useRef<MediaStream | null>(null);
   const isScanningRef = useRef(false);
@@ -713,15 +716,17 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           const result = await workerRef.current.recognize(imageUrl);
           
           // Always log raw OCR output for diagnosis (not gated by DEBUG)
+          const recognizedWords = (result.data as any).words ?? [];
+          const wordCount = Array.isArray(recognizedWords) ? recognizedWords.length : 0;
           console.log('[OCR RAW]', {
             text: JSON.stringify(result.data.text),
             confidence: result.data.confidence,
-            wordCount: result.data.words?.length ?? 0,
+            wordCount,
           });
           
           // Push formatted entry to on-screen debug log (only if thumbnail is shown)
           if (SHOW_DEBUG_THUMBNAIL) {
-            const summary = `"${result.data.text.trim().replace(/\s+/g, ' ').slice(0, 40)}" | conf: ${Math.round(result.data.confidence)} | words: ${result.data.words?.length ?? 0}`;
+            const summary = `"${result.data.text.trim().replace(/\s+/g, ' ').slice(0, 40)}" | conf: ${Math.round(result.data.confidence)} | words: ${wordCount}`;
             setOcrDebugLog(prev => [summary, ...prev].slice(0, MAX_DEBUG_LOG_LINES));
           }
           
@@ -831,17 +836,24 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
               
               if (lastMatchRef.current.count >= REQUIRED_CONSECUTIVE_MATCHES) {
                 if (DEBUG) console.log('[CameraScanner] Required consecutive matches reached:', REQUIRED_CONSECUTIVE_MATCHES);
-                setScanningStatus(`✓ Found: ${cardId}`);
-                
-                // Stop scanning and notify parent
+                console.log('[CameraScanner] Card ID detected:', cardId);
+                setScanningStatus(`✓ Added: ${cardId}`);
+
+                onCardIdDetected(cardId);
+                setScannedCards(prev => [...prev, cardId]);
+                setLastSuccessMessage(cardId);
+                setTimeout(() => setLastSuccessMessage(null), 2000);
+                setOcrDebugLog([]);
+
                 setIsScanning(false);
-                stopCamera();
+                isScanningRef.current = false;
                 lastMatchRef.current = null;
-                
-                // Small delay before callback to show success message
+
                 setTimeout(() => {
-                  onCardIdDetected(cardId!);
-                }, 500);
+                  setIsScanning(true);
+                  isScanningRef.current = true;
+                  scanFrame();
+                }, RESTART_SCAN_DELAY);
                 return;
               }
             } else {
@@ -904,6 +916,10 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
         </h2>
         <button
           onClick={() => {
+            const message = scannedCards.length > 0 
+              ? `Scanned ${scannedCards.length} card${scannedCards.length > 1 ? 's' : ''}`
+              : 'No cards scanned';
+            console.log('[CameraScanner]', message, scannedCards);
             stopCamera();
             onClose();
           }}
@@ -986,6 +1002,27 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
                 </div>
               </div>
             </div>
+
+            {lastSuccessMessage && (
+              <div
+                className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-green-500 text-white px-6 py-3 rounded-lg font-bold text-lg shadow-lg animate-bounce pointer-events-none"
+                style={{ zIndex: 40 }}
+              >
+                ✓ Added: {lastSuccessMessage}
+              </div>
+            )}
+
+            <button
+              onClick={() => {
+                setScannedCards([]);
+                setLastSuccessMessage(null);
+                setScanningStatus('Ready to scan');
+              }}
+              className="absolute bottom-4 right-4 px-3 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
+              style={{ zIndex: 25 }}
+            >
+              Clear ({scannedCards.length})
+            </button>
           </>
         )}
       </div>
@@ -994,10 +1031,15 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
       {!error && (
         <div className="bg-gray-900 border-t border-gray-700 p-3 relative" style={{ zIndex: 20 }}>
           <div className="max-w-2xl mx-auto text-center">
-            <p className="text-gray-400 text-sm font-medium">
-              {isScanning && <Loader2 size={14} className="inline animate-spin mr-2" />}
-              {scanningStatus}
-            </p>
+            <div className="inline-block bg-black/80 px-4 py-2 rounded-lg backdrop-blur-sm max-w-full">
+              <p className="text-white text-xs font-medium line-clamp-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                {isScanning && <Loader2 size={14} className="inline animate-spin mr-1" />}
+                {scanningStatus}
+                {scannedCards.length > 0 && (
+                  <span className="ml-2 text-purple-400">({scannedCards.length} scanned)</span>
+                )}
+              </p>
+            </div>
           </div>
         </div>
       )}
