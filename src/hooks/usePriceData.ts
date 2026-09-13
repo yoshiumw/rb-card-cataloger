@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ref, onValue } from 'firebase/database';
 import { realtimeDb } from '../firebase/config';
+import Fuse from 'fuse.js';
 
 export interface CardPrice {
   productId: string;
@@ -11,6 +12,7 @@ export interface CardPrice {
   highPrice: number | null;
   marketPrice: number | null;
   extNumber: string;
+  subTypeName: string; // "Normal" | "Foil" | "Showcase" | etc.
 }
 
 /**
@@ -74,5 +76,24 @@ export function usePriceData() {
     return prices[extNumber];
   };
 
-  return { prices, getPriceByCardNumber, getPriceByExactId, loading, error };
+  // Fuzzy match by card name, preferring "Normal" variant when multiple matches exist
+  const getPriceByName = (cardName: string): CardPrice | undefined => {
+    if (!cardName || Object.keys(prices).length === 0) return undefined;
+    
+    const priceArray = Object.values(prices);
+    const fuse = new Fuse(priceArray, {
+      keys: ['cleanName', 'name'],
+      threshold: 0.4, // Allow some fuzzy matching for minor typos/variations
+      includeScore: false,
+    });
+    
+    const results = fuse.search(cardName);
+    if (results.length === 0) return undefined;
+
+    // Prefer "Normal" variant if found among the matches
+    const normalMatch = results.find((r) => r.item.subTypeName === 'Normal');
+    return normalMatch?.item ?? results[0].item;
+  };
+
+  return { prices, getPriceByCardNumber, getPriceByExactId, getPriceByName, loading, error };
 }
