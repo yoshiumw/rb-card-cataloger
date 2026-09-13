@@ -8,6 +8,120 @@ const ENABLE_EROSION = false;
 const MIN_OCR_CONFIDENCE = 60;
 const REQUIRED_CONSECUTIVE_MATCHES = 2;
 const PSM_MODE = PSM.SINGLE_LINE; // Alternative: PSM.SPARSE_TEXT
+const FOOTER_CROP_HEIGHT_RATIO = 0.09; // Target bottom ~9% of frame for card footer
+const MAX_SET_CODE_EDIT_DISTANCE = 1;
+const KNOWN_SET_CODES = ['VEN']; // TODO: populate with full list of valid set codes
+
+/**
+ * Compute Levenshtein distance between two strings.
+ * Used for fuzzy matching of set codes.
+ */
+function levenshteinDistance(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  
+  // Create a matrix of size (m+1) x (n+1)
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  
+  // Initialize base cases
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  
+  // Fill the matrix
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,      // deletion
+        dp[i][j - 1] + 1,      // insertion
+        dp[i - 1][j - 1] + cost // substitution
+      );
+    }
+  }
+  
+  return dp[m][n];
+}
+
+/**
+ * Sauvola's local adaptive thresholding method.
+ * Uses integral images for efficient mean and stddev computation.
+ */
+function sauvolaThreshold(
+  grayscale: Uint8ClampedArray,
+  width: number,
+  height: number,
+  windowSize: number = 15,
+  k: number = 0.2,
+  r: number = 128
+): Uint8ClampedArray {
+  const totalPixels = width * height;
+  const result = new Uint8ClampedArray(totalPixels);
+  
+  // Build integral image for mean computation
+  const integral = new Float64Array(totalPixels + width + 1); // Extra row/col for padding
+  const integralSquared = new Float64Array(totalPixels + width + 1);
+  
+  // Fill integral images
+  for (let y = 0; y < height; y++) {
+    let rowSum = 0;
+    let rowSumSq = 0;
+    for (let x = 0; x < width; x++) {
+      const idx = y * width + x;
+      const val = grayscale[idx];
+      rowSum += val;
+      rowSumSq += val * val;
+      
+      const integralIdx = (y + 1) * (width + 1) + (x + 1);
+      integral[integralIdx] = rowSum + integral[y * (width + 1) + (x + 1)];
+      integralSquared[integralIdx] = rowSumSq + integralSquared[y * (width + 1) + (x + 1)];
+    }
+  }
+  
+  const halfWindow = Math.floor(windowSize / 2);
+  
+  // Apply Sauvola thresholding
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = y * width + x;
+      
+      // Determine window bounds (clamp to image edges)
+      const xMin = Math.max(0, x - halfWindow);
+      const xMax = Math.min(width - 1, x + halfWindow);
+      const yMin = Math.max(0, y - halfWindow);
+      const yMax = Math.min(height - 1, y + halfWindow);
+      
+      const w = xMax - xMin + 1;
+      const h = yMax - yMin + 1;
+      const count = w * h;
+      
+      // Get sum and sum of squares from integral images
+      const getSum = (xi: number, yi: number) => {
+        const clampedX = Math.min(xi, width);
+        const clampedY = Math.min(yi, height);
+        return integral[(clampedY + 1) * (width + 1) + (clampedX + 1)];
+      };
+      const getSumSq = (xi: number, yi: number) => {
+        const clampedX = Math.min(xi, width);
+        const clampedY = Math.min(yi, height);
+        return integralSquared[(clampedY + 1) * (width + 1) + (clampedX + 1)];
+      };
+      
+      const sum = getSum(xMax, yMax) - getSum(xMin - 1, yMax) - getSum(xMax, yMin - 1) + getSum(xMin - 1, yMin - 1);
+      const sumSq = getSumSq(xMax, yMax) - getSumSq(xMin - 1, yMax) - getSumSq(xMax, yMin - 1) + getSumSq(xMin - 1, yMin - 1);
+      
+      const mean = sum / count;
+      const variance = (sumSq / count) - (mean * mean);
+      const stddev = Math.sqrt(Math.max(0, variance));
+      
+      // Sauvola threshold formula: T = mean * (1 + k * ((stddev / r) - 1))
+      const threshold = mean * (1 + k * ((stddev / r) - 1));
+      
+      result[idx] = grayscale[idx] > threshold ? 255 : 0;
+    }
+  }
+  
+  return result;
+}
 
 /**
  * Compute Otsu's threshold for adaptive binarization.
@@ -111,8 +225,8 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: 'environment',
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
           }
         });
         
@@ -293,10 +407,10 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
       // Draw video frame to canvas
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Crop a larger region to capture card ID more reliably
-      // Card IDs can appear in various positions depending on device orientation
-      const cropWidth = Math.floor(canvas.width * 0.5);
-      const cropHeight = Math.floor(canvas.height * 0.25);
+      // Crop the bottom footer strip of the card where the ID is located
+      // Targets full width and only bottom ~9% height (configurable via FOOTER_CROP_HEIGHT_RATIO)
+      const cropWidth = canvas.width;
+      const cropHeight = Math.floor(canvas.height * FOOTER_CROP_HEIGHT_RATIO);
       const cropX = 0;
       const cropY = canvas.height - cropHeight;
       if (DEBUG) console.log('[CameraScanner] Crop region:', { x: cropX, y: cropY, width: cropWidth, height: cropHeight });
@@ -345,16 +459,23 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           data[i + 2] = gray; // B
         }
         
-        // Step 4: Apply Otsu's method for adaptive threshold binarization
-        const otsuThreshold = computeOtsuThreshold(data);
-        if (DEBUG) console.log('[CameraScanner] Otsu threshold computed:', otsuThreshold);
-        
+        // Step 4: Apply Sauvola's local adaptive thresholding
+        // Extract grayscale values (every 4th byte starting at index 0)
+        const grayscaleValues = new Uint8ClampedArray(scaledWidth * scaledHeight);
         for (let i = 0; i < data.length; i += 4) {
-          const gray = data[i];
-          const value = gray > otsuThreshold ? 255 : 0;
-          data[i] = value;
-          data[i + 1] = value;
-          data[i + 2] = value;
+          grayscaleValues[i / 4] = data[i];
+        }
+        
+        const binaryResult = sauvolaThreshold(grayscaleValues, scaledWidth, scaledHeight);
+        if (DEBUG) console.log('[CameraScanner] Sauvola thresholding applied');
+        
+        // Apply binary result back to RGBA data
+        for (let i = 0; i < binaryResult.length; i++) {
+          const idx = i * 4;
+          const value = binaryResult[i];
+          data[idx] = value;
+          data[idx + 1] = value;
+          data[idx + 2] = value;
         }
         
         // Step 5: Apply morphological erosion to remove small noise (optional)
@@ -434,7 +555,6 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           const confidence = result.data.confidence;
           if (DEBUG) console.log('[CameraScanner] OCR Result text:', JSON.stringify(text));
           if (DEBUG) console.log('[CameraScanner] OCR Result confidence:', confidence);
-          if (DEBUG) console.log('[CameraScanner] OCR Result words:', result.data.words);
 
           // Confidence-based filtering
           if (confidence < MIN_OCR_CONFIDENCE) {
@@ -454,7 +574,9 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           // 3. "SFD-100-298" (API format with set size)
           
           let cardId: string | null = null;
+          let matchMethod: string | null = null;
           
+          // Try strict regex patterns FIRST
           // Try to match "SET • NUMBER/TOTAL" format first
           const bulletPattern = /\b([A-Z]{2,5})\s*[•·]\s*(\d{1,4})(?:\/\d{1,4})?\b/i;
           const bulletMatch = text.match(bulletPattern);
@@ -464,6 +586,7 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             const setCode = bulletMatch[1].toUpperCase();
             const cardNumber = bulletMatch[2];
             cardId = `${setCode}-${cardNumber}`;
+            matchMethod = 'strict-bullet';
             if (DEBUG) console.log('[CameraScanner] Matched bullet pattern:', cardId);
           } else {
             // Try standard dash format
@@ -472,8 +595,44 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             
             if (dashMatch) {
               cardId = dashMatch[1].toUpperCase();
+              matchMethod = 'strict-dash';
               if (DEBUG) console.log('[CameraScanner] Matched dash pattern:', cardId);
-            } else {
+            }
+          }
+          
+          // Fallback to fuzzy matching if strict patterns failed
+          if (!cardId) {
+            if (DEBUG) console.log('[CameraScanner] Strict patterns failed, attempting fuzzy matching');
+            
+            // Extract candidate alphabetic tokens (2-5 uppercase letters)
+            const alphaTokenPattern = /\b([A-Z]{2,5})\b/gi;
+            const numberTokenPattern = /\b(\d{1,4})\b/gi;
+            
+            const alphaMatches = [...text.matchAll(alphaTokenPattern)];
+            const numberMatches = [...text.matchAll(numberTokenPattern)];
+            
+            // Find best set code match via Levenshtein distance
+            let bestSetCode: string | null = null;
+            let bestDistance = MAX_SET_CODE_EDIT_DISTANCE + 1;
+            
+            for (const match of alphaMatches) {
+              const token = match[1].toUpperCase();
+              for (const knownCode of KNOWN_SET_CODES) {
+                const dist = levenshteinDistance(token, knownCode);
+                if (dist <= MAX_SET_CODE_EDIT_DISTANCE && dist < bestDistance) {
+                  bestDistance = dist;
+                  bestSetCode = knownCode;
+                }
+              }
+            }
+            
+            // If we found a plausible set code and there's a nearby number, construct cardId
+            if (bestSetCode && numberMatches.length > 0) {
+              const cardNumber = numberMatches[0][1];
+              cardId = `${bestSetCode}-${cardNumber}`;
+              matchMethod = 'fuzzy';
+              if (DEBUG) console.log('[CameraScanner] Fuzzy matched set code:', bestSetCode, 'with number:', cardNumber);
+            } else if (!bestSetCode) {
               if (DEBUG) console.log('[CameraScanner] No pattern matched in text:', JSON.stringify(text));
             }
           }
@@ -604,8 +763,8 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
             
             {/* Scanning overlay - higher z-index to stay on top */}
             <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
-              {/* Scanning region indicator */}
-              <div className="absolute bottom-20 left-4 w-[50%] h-[25%] border-4 border-purple-500 border-dashed animate-pulse rounded-lg">
+              {/* Scanning region indicator - wide, short rectangle at bottom matching FOOTER_CROP_HEIGHT_RATIO */}
+              <div className="absolute bottom-4 left-0 right-0 h-[9%] border-4 border-purple-500 border-dashed animate-pulse rounded-lg mx-4">
                 <div className="absolute top-0 left-0 w-full h-full bg-purple-500/20 rounded-lg" />
                 <div className="absolute -top-6 left-0 text-xs text-purple-300 font-semibold">
                   Card ID Area
