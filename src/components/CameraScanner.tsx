@@ -865,25 +865,55 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           // This allows OCR errors like "SED" -> "SFD" or "0GN" -> "OGN"
           let cardId: string | null = null;
 
+          // Helper function to normalize OCR errors in the 2-digit rune number portion only
+          // This handles common OCR confusions: O/Q/D->0, I/L->1, Z->2, S->5, G->6, B->8
+          // We only apply this to the digit segment, not the set code (which legitimately contains letters)
+          const normalizeRuneDigits = (raw: string): string => {
+            const digitConfusionMap: Record<string, string> = {
+              O: '0',
+              Q: '0',
+              D: '0',
+              I: '1',
+              L: '1',
+              Z: '2',
+              S: '5',
+              G: '6',
+              B: '8',
+            };
+            return raw
+              .split('')
+              .map((char) => digitConfusionMap[char.toUpperCase()] ?? char)
+              .join('');
+          };
+
           // Try Rune format FIRST: AAA.R## or AAAR## (e.g., VEN.R05, SFD.R05, VENR05, VENR05EN)
           // Rune cards have no total count suffix
           // We check this first because the standard pattern could incorrectly match "R05" as a set code + number
-          // Pattern 1: With separator (AAA.R##, AAA • R##, etc.)
-          // Pattern 2: Without separator (AAAR## like VENR05, VENR05EN)
-          const runePatternWithSeparator = /([A-Z0O]{2,4})\s*[-•·.\s]+\s*R(\d{2})/i;
-          const runePatternNoSeparator = /([A-Z0O]{2,4})R(\d{2})/i;
+          // Pattern captures: set code (2-4 letters), optional separator, R, then exactly 2 chars (letters or digits for OCR errors)
+          // The "EN" suffix may appear after the rune number but we don't require it
+          const runePatternWithSeparator = /([A-Z]{2,4})\s*[-•·.\s]?\s*R([A-Z0-9]{2})/i;
+          const runePatternNoSeparator = /([A-Z]{2,4})R([A-Z0-9]{2})/i;
           const runeMatch = result.data.text.match(runePatternWithSeparator) || result.data.text.match(runePatternNoSeparator);
 
           if (runeMatch) {
-            const rawSetCode = runeMatch[1];
-            const runeNumber = runeMatch[2];
-            const matchedSetCode = fuzzyMatchSetCode(rawSetCode, KNOWN_SET_CODES);
+            const rawSetCode = runeMatch[1].toUpperCase();
+            const rawDigits = runeMatch[2];
+            // Apply normalization only to the 2-digit segment
+            const normalizedDigits = normalizeRuneDigits(rawDigits);
 
-            if (matchedSetCode) {
-              cardId = `${matchedSetCode}-R${runeNumber}`;
-              console.log('[CameraScanner] Rune card detected:', cardId, 'from text:', JSON.stringify(result.data.text));
+            // Validate: after normalization, must be exactly 2 digits
+            if (/^\d{2}$/.test(normalizedDigits)) {
+              const matchedSetCode = fuzzyMatchSetCode(rawSetCode, KNOWN_SET_CODES);
+
+              if (matchedSetCode) {
+                cardId = `${matchedSetCode}-R${normalizedDigits}`;
+                console.log('[CameraScanner] Rune card detected:', cardId, 'from text:', JSON.stringify(result.data.text));
+              } else {
+                console.log('[CameraScanner] Rune card set code not recognized (even after fuzzy match):', rawSetCode);
+              }
             } else {
-              console.log('[CameraScanner] Rune card set code not recognized (even after fuzzy match):', rawSetCode);
+              // Normalization didn't produce valid 2-digit number - OCR too garbled
+              console.log('[CameraScanner] Rune digit segment invalid after normalization:', rawDigits, '->', normalizedDigits);
             }
           } else {
             // Then try standard format: AAA###/### or AAA • ###/###
