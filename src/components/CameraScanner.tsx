@@ -865,13 +865,13 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           // This allows OCR errors like "SED" -> "SFD" or "0GN" -> "OGN"
           let cardId: string | null = null;
 
-          // Try Rune format FIRST: AAA.R## or AAAR## (e.g., VEN.R05, SFD.R05, VENR05)
+          // Try Rune format FIRST: AAA.R## or AAAR## (e.g., VEN.R05, SFD.R05, VENR05, VENR05EN)
           // Rune cards have no total count suffix
           // We check this first because the standard pattern could incorrectly match "R05" as a set code + number
           // Pattern 1: With separator (AAA.R##, AAA • R##, etc.)
-          // Pattern 2: Without separator (AAAR## like VENR05)
-          const runePatternWithSeparator = /([A-Z0O]{2,3})\s*[-•·.\s]+\s*R(\d{2})/i;
-          const runePatternNoSeparator = /([A-Z0O]{2,3})R(\d{2})/i;
+          // Pattern 2: Without separator (AAAR## like VENR05, VENR05EN)
+          const runePatternWithSeparator = /([A-Z0O]{2,4})\s*[-•·.\s]+\s*R(\d{2})/i;
+          const runePatternNoSeparator = /([A-Z0O]{2,4})R(\d{2})/i;
           const runeMatch = result.data.text.match(runePatternWithSeparator) || result.data.text.match(runePatternNoSeparator);
 
           if (runeMatch) {
