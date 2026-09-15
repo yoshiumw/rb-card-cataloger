@@ -865,21 +865,42 @@ export default function CameraScanner({ onCardIdDetected, onClose }: CameraScann
           // This allows OCR errors like "SED" -> "SFD" or "0GN" -> "OGN"
           let cardId: string | null = null;
 
-          const potentialMatch = result.data.text.match(/([A-Z0O]{2,3})\s*[-•·.\s]*\s*(\d{1,4})/i);
+          // Try Rune format FIRST: AAA.R## (e.g., VEN.R05, SFD.R05)
+          // Rune cards have no total count suffix
+          // We check this first because the standard pattern could incorrectly match "R05" as a set code + number
+          const runePattern = /([A-Z0O]{2,3})\s*[-•·.\s]*\s*R(\d{2})/i;
+          const runeMatch = result.data.text.match(runePattern);
 
-          if (potentialMatch) {
-            const rawSetCode = potentialMatch[1];
-            const cardNumber = potentialMatch[2];
+          if (runeMatch) {
+            const rawSetCode = runeMatch[1];
+            const runeNumber = runeMatch[2];
             const matchedSetCode = fuzzyMatchSetCode(rawSetCode, KNOWN_SET_CODES);
 
             if (matchedSetCode) {
-              cardId = `${matchedSetCode}-${cardNumber}`;
-              console.log('[CameraScanner] Fuzzy-matched card ID:', cardId, 'from text:', JSON.stringify(result.data.text));
+              cardId = `${matchedSetCode}-R${runeNumber}`;
+              console.log('[CameraScanner] Rune card detected:', cardId, 'from text:', JSON.stringify(result.data.text));
             } else {
-              console.log('[CameraScanner] Set code not recognized (even after fuzzy match):', rawSetCode);
+              console.log('[CameraScanner] Rune card set code not recognized (even after fuzzy match):', rawSetCode);
             }
           } else {
-            console.log('[CameraScanner] No card ID pattern found in:', JSON.stringify(result.data.text));
+            // Then try standard format: AAA###/### or AAA • ###/###
+            const standardPattern = /([A-Z0O]{2,3})\s*[-•·.\s]*\s*(\d{1,4})(?:\s*[/-]\s*\d{1,4})?/i;
+            const standardMatch = result.data.text.match(standardPattern);
+
+            if (standardMatch) {
+              const rawSetCode = standardMatch[1];
+              const cardNumber = standardMatch[2];
+              const matchedSetCode = fuzzyMatchSetCode(rawSetCode, KNOWN_SET_CODES);
+
+              if (matchedSetCode) {
+                cardId = `${matchedSetCode}-${cardNumber}`;
+                console.log('[CameraScanner] Fuzzy-matched card ID:', cardId, 'from text:', JSON.stringify(result.data.text));
+              } else {
+                console.log('[CameraScanner] Set code not recognized (even after fuzzy match):', rawSetCode);
+              }
+            } else {
+              console.log('[CameraScanner] No card ID pattern found in:', JSON.stringify(result.data.text));
+            }
           }
 
           if (cardId) {
