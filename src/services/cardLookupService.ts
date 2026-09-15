@@ -214,34 +214,36 @@ export function cacheCard(card: Card): void {
  * Validate card ID format
  * Accepts formats like: VEN-131, OGN-039, OGN-039-298
  * Also accepts bullet format: SFD • 100/1xx (converts to SFD-100)
+ * Also accepts Rune format: VEN-R05, SFD-R12
  */
 export function isValidCardIdFormat(cardId: string): boolean {
   const trimmed = cardId.trim();
-  
-  // Standard dash format
-  const dashPattern = /^[A-Z]{2,5}-\d{2,4}(-\d{2,4})?$/i;
+
+  // Standard dash format (including Rune cards with R prefix)
+  const dashPattern = /^[A-Z]{2,5}-R?\d{2,4}(-\d{2,4})?$/i;
   if (dashPattern.test(trimmed)) {
     return true;
   }
-  
+
   // Bullet format (from physical cards)
-  const bulletPattern = /^[A-Z]{2,5}\s*[•·]\s*\d{1,4}(\/\d{1,4})?$/i;
+  const bulletPattern = /^[A-Z]{2,5}\s*[•·]\s*R?\d{1,4}(\/\d{1,4})?$/i;
   return bulletPattern.test(trimmed);
 }
 
 /**
  * Normalize card ID format
  * Converts "SFD • 100/1xx" to "SFD-100"
+ * Converts "VEN • R05" to "VEN-R05"
  */
 export function normalizeCardId(cardId: string): string {
   const trimmed = cardId.trim().toUpperCase();
-  
-  // Check if it's bullet format
-  const bulletMatch = trimmed.match(/^([A-Z]{2,5})\s*[•·]\s*(\d{1,4})(?:\/\d{1,4})?$/);
+
+  // Check if it's bullet format (standard or Rune)
+  const bulletMatch = trimmed.match(/^([A-Z]{2,5})\s*[•·]\s*(R?\d{1,4})(?:\/\d{1,4})?$/);
   if (bulletMatch) {
     return `${bulletMatch[1]}-${bulletMatch[2]}`;
   }
-  
+
   // Already in dash format or unknown format
   return trimmed;
 }
