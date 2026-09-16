@@ -256,7 +256,7 @@ function CardItem({ card, onQuantityChange, onRemove, onClick }: {
           <img 
             src={card.imageUrl} 
             alt={card.cardName}
-            className="w-full h-full object-cover"
+            className="w-full h-full object-cover object-[center_20%]"
             loading="lazy"
           />
         ) : (
