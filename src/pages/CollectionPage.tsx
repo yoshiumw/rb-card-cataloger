@@ -4,6 +4,7 @@ import { getCollectionAsArray, removeCardFromCollection, updateCardQuantity, get
 import { useAuth } from '../contexts/AuthContext';
 import { CollectionEntry } from '../types';
 import { usePriceData } from '../hooks/usePriceData';
+import { CardDetailModal } from '../components/CardDetailModal';
 
 type SortField = 'name' | 'set' | 'type' | 'quantity' | 'added';
 type SortDir = 'asc' | 'desc';
@@ -17,6 +18,7 @@ export default function CollectionPage() {
   const [typeFilter, setTypeFilter] = useState('');
   const [sortField, setSortField] = useState<SortField>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const [selectedCard, setSelectedCard] = useState<CollectionEntry | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -207,18 +209,22 @@ export default function CollectionPage() {
               card={card}
               onQuantityChange={handleQuantityChange}
               onRemove={handleRemove}
+              onClick={() => setSelectedCard(card)}
             />
           ))}
         </div>
       )}
+
+      <CardDetailModal card={selectedCard} onClose={() => setSelectedCard(null)} />
     </div>
   );
 }
 
-function CardItem({ card, onQuantityChange, onRemove }: { 
+function CardItem({ card, onQuantityChange, onRemove, onClick }: { 
   card: CollectionEntry; 
   onQuantityChange: (id: string, delta: number) => void;
   onRemove: (id: string) => void;
+  onClick: () => void;
 }) {
   const { getPriceByCardNumber, prices, loading } = usePriceData();
   const price = getPriceByCardNumber(card.cardId);
@@ -240,14 +246,17 @@ function CardItem({ card, onQuantityChange, onRemove }: {
   const gradient = typeColors[card.cardType] || 'from-gray-600/20 to-gray-600/20 border-gray-500/30';
 
   return (
-    <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden hover:border-gray-600 transition-colors">
+    <div 
+      className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden hover:border-gray-600 transition-colors cursor-pointer"
+      onClick={onClick}
+    >
       {/* Card image */}
       <div className={`h-32 bg-gradient-to-br ${gradient} border-b flex items-center justify-center relative overflow-hidden`}>
         {card.imageUrl ? (
           <img 
             src={card.imageUrl} 
             alt={card.cardName}
-            className="w-full h-full object-cover"
+            className="w-full h-full object-[center_200px]"
             loading="lazy"
           />
         ) : (
@@ -285,21 +294,30 @@ function CardItem({ card, onQuantityChange, onRemove }: {
         <div className="flex items-center justify-between mt-3">
           <div className="flex items-center gap-1">
             <button
-              onClick={() => onQuantityChange(card.cardId, -1)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onQuantityChange(card.cardId, -1);
+              }}
               className="w-7 h-7 rounded-md bg-gray-700 hover:bg-gray-600 flex items-center justify-center text-gray-300 transition-colors"
             >
               <Minus size={14} />
             </button>
             <span className="w-8 text-center text-sm font-medium text-white">{card.quantity}</span>
             <button
-              onClick={() => onQuantityChange(card.cardId, 1)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onQuantityChange(card.cardId, 1);
+              }}
               className="w-7 h-7 rounded-md bg-gray-700 hover:bg-gray-600 flex items-center justify-center text-gray-300 transition-colors"
             >
               <Plus size={14} />
             </button>
           </div>
           <button
-            onClick={() => onRemove(card.cardId)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove(card.cardId);
+            }}
             className="p-1.5 rounded-md text-gray-400 hover:text-red-400 hover:bg-red-600/10 transition-colors"
             title="Remove card"
           >
