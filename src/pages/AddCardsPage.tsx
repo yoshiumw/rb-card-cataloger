@@ -185,7 +185,7 @@ export default function AddCardsPage() {
               </button>
             </div>
             {formatValid === false && inputValue.trim() && (
-              <p className="mt-2 text-sm text-red-400">Invalid format. Use format like OGN-039, VEN-131, or OGN-039-298.</p>
+              <p className="mt-2 text-sm text-red-400">Invalid format. Use format like OGN-039, VEN-131, RAD-001, or OGN-039-298.</p>
             )}
           </div>
 
@@ -258,7 +258,7 @@ export default function AddCardsPage() {
           <li>• Press <kbd className="px-1.5 py-0.5 bg-gray-700 rounded text-xs text-gray-300">Enter</kbd> to add and immediately enter the next card</li>
           <li>• Card IDs are case-insensitive (OGN-039 = ogn-039)</li>
           <li>• Adding the same card increases its quantity</li>
-          <li>• IDs follow the format: <code className="text-purple-300">SET-NUMBER</code> (e.g., OGN-039, VEN-131)</li>
+          <li>• IDs follow the format: <code className="text-purple-300">SET-NUMBER</code> (e.g., OGN-039, VEN-131, RAD-001)</li>
           <li>• Card data is fetched live from the Riftbound database</li>
         </ul>
       </div>
