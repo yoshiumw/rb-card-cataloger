@@ -212,7 +212,7 @@ export function cacheCard(card: Card): void {
  */
 /**
  * Validate card ID format
- * Accepts formats like: VEN-131, OGN-039, OGN-039-298
+ * Accepts formats like: VEN-131, OGN-039, OGN-039-298, RAD-001
  * Also accepts bullet format: SFD • 100/1xx (converts to SFD-100)
  * Also accepts Rune format: VEN-R05, SFD-R12
  */

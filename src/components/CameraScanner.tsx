@@ -11,7 +11,7 @@ const MIN_OCR_CONFIDENCE = 0;
 const REQUIRED_CONSECUTIVE_MATCHES = 2;
 const RESTART_SCAN_DELAY = 1500;
 const PSM_MODE = PSM.SINGLE_LINE; // Alternative: PSM.SPARSE_TEXT
-const KNOWN_SET_CODES = ['OGN', 'SFD', 'UNL', 'VEN'];
+const KNOWN_SET_CODES = ['OGN', 'SFD', 'UNL', 'VEN', 'RAD'];
 
 // Diagnostic flags for isolating OCR failures
 const INVERT_BINARIZED_OUTPUT = false;
